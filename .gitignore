@@ -1,0 +1,10 @@
+/satisfaction-core/.cabal-sandbox/
+/satisfaction-core/cabal.sandbox.config
+/satisfaction-core/dist/
+/satisfaction/.cabal-sandbox/
+/satisfaction/cabal.sandbox.config
+/satisfaction/dist/
+/satisfaction-conduit/.cabal-sandbox/
+/satisfaction-conduit/cabal.sandbox.config
+/satisfaction-conduit/dist/
+/satisfaction/cabal.config

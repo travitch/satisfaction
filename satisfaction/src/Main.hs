@@ -36,10 +36,9 @@ satisfy opts = do
         Nothing -> putStrLn "No clauses"
         Just cnf' -> do
           sol <- S.solve cnf'
-          putStrLn ("Solving " ++ show cnf')
           case sol of
-            S.Unsat -> print sol
-            S.Solution { S.satisfyingAssignment = a } -> print a >> print sol
+            Nothing -> putStrLn "Unsat"
+            Just sol' -> print (S.satisfyingAssignment sol')
 
 convertCNF :: P.CNF -> Maybe (S.CNF Int)
 convertCNF cnf0 =

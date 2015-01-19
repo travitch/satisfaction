@@ -6,7 +6,7 @@ module Data.Array.Traverse (
 
 import qualified Data.Array.IArray as A
 
-foldArrayM :: (A.IArray a e) => (b -> Int -> e -> IO b) -> b -> a Int e -> IO b
+foldArrayM :: (A.IArray a e, Monad m) => (b -> Int -> e -> m b) -> b -> a Int e -> m b
 foldArrayM f seed a =
   let (low, high) = A.bounds a
   in go low high seed
@@ -15,7 +15,7 @@ foldArrayM f seed a =
                  | otherwise = f b cur (a A.! cur) >>= go low (cur - 1)
 {-# INLINE foldArrayM #-}
 
-mapArrayM_ :: (A.IArray a e) => (Int -> e -> IO ()) -> a Int e -> IO ()
+mapArrayM_ :: (A.IArray a e, Monad m) => (Int -> e -> m ()) -> a Int e -> m ()
 mapArrayM_ f a =
   let (low, high) = A.bounds a
   in go low high
