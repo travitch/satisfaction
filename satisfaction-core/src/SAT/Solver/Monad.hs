@@ -46,6 +46,7 @@ import qualified Data.Set as S
 
 import qualified Data.Array.Traverse as AT
 import qualified Data.Array.Vector as V
+import qualified Data.Array.MArray.Unsafe as UMA
 import qualified SAT.CNF as C
 import qualified SAT.Literal as L
 import qualified SAT.Solver.Debug as D
@@ -142,8 +143,8 @@ updateWatchlists l kConflict kNext = do
   let clauses = case e of
                    Env { eCNF = cnf } -> C.clauseArray cnf
       wl = eWatchlist e
-  clausesWatching <- liftIO $ MA.readArray (wlLitWatches wl) falseLit
-  liftIO $ MA.writeArray (wlLitWatches wl) falseLit Seq.empty
+  clausesWatching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
+  liftIO $ UMA.writeArray (wlLitWatches wl) falseLit Seq.empty
   liftIO $ D.traceIO ("  [uw] Initial clauses watching " ++ show falseLit ++ ": " ++ show clausesWatching)
   go clauses clausesWatching
   where
@@ -167,14 +168,14 @@ updateWatchlists l kConflict kNext = do
       case () of
         _ | val >= L.unassigned -> do
               liftIO $ D.traceIO ("    [uw] Asserting a literal during watchlist update: " ++ show otherLit)
-              watching <- liftIO $ MA.readArray (wlLitWatches wl) falseLit
-              liftIO $ MA.writeArray (wlLitWatches wl) falseLit (watching Seq.|> clauseNum)
+              watching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
+              liftIO $ UMA.writeArray (wlLitWatches wl) falseLit (watching Seq.|> clauseNum)
               assertLiteral otherLit
               go clauses rest
           | otherwise -> do
               liftIO $ D.traceIO ("    [uw] Encountered a unit conflict due to " ++ show otherLit ++ ", which is assigned " ++ show val)
-              watching <- liftIO $ MA.readArray (wlLitWatches wl) falseLit
-              liftIO $ MA.writeArray (wlLitWatches wl) falseLit (watchers Seq.>< watching)
+              watching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
+              liftIO $ UMA.writeArray (wlLitWatches wl) falseLit (watchers Seq.>< watching)
               liftIO $ D.traceIO ("        [uw/conflict] Clauses watching " ++ show falseLit ++ ": " ++ show (watchers Seq.>< watching))
               kConflict Conflict
     go clauses watchers = do
@@ -184,7 +185,7 @@ updateWatchlists l kConflict kNext = do
           liftIO $ D.traceIO ("      [uw] Successfully updated all watches")
           -- We have successfully found a new set of consistent
           -- watches
-          watches <- liftIO $ MA.readArray (wlLitWatches wl) falseLit
+          watches <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
           liftIO $ D.traceIO ("        [uw/success] Clauses watching " ++ show falseLit ++ ": " ++ show watches)
           kNext
         clauseNum Seq.:< rest -> do
@@ -199,22 +200,22 @@ updateWatchlists l kConflict kNext = do
             case otherVal == L.liftedTrue of
               True -> do
                 liftIO $ D.traceIO "      [uw] Satisfied clause"
-                watches <- liftIO $ MA.readArray (wlLitWatches wl) falseLit
-                liftIO $ MA.writeArray (wlLitWatches wl) falseLit (watches Seq.|> clauseNum)
+                watches <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
+                liftIO $ UMA.writeArray (wlLitWatches wl) falseLit (watches Seq.|> clauseNum)
                 go clauses rest
               False -> do
                 -- Find a new lit to watch instead of falseLit
                 withTrueOrUnassignedLiteral (kUnit clauseNum otherLit watchers clauses rest) cl otherLit $ \newWatchedLit -> do
-                  liftIO $ MA.writeArray (wlClauseWatches wl) falseLitIndex newWatchedLit
-                  watchingLit <- liftIO $ MA.readArray (wlLitWatches wl) newWatchedLit
-                  liftIO $ MA.writeArray (wlLitWatches wl) newWatchedLit (watchingLit Seq.|> clauseNum)
+                  liftIO $ UMA.writeArray (wlClauseWatches wl) falseLitIndex newWatchedLit
+                  watchingLit <- liftIO $ UMA.readArray (wlLitWatches wl) newWatchedLit
+                  liftIO $ UMA.writeArray (wlLitWatches wl) newWatchedLit (watchingLit Seq.|> clauseNum)
                   go clauses rest
 {-# INLINE updateWatchlists #-}
 
 literalValue :: L.Literal -> Solver L.Value
 literalValue l = do
   assignments <- asks eAssignment
-  val <- liftIO $ MA.readArray assignments (L.var l)
+  val <- liftIO $ UMA.readArray assignments (L.var l)
   return $ L.litValue l val
 {-# INLINE literalValue #-}
 
@@ -225,8 +226,8 @@ normalizeWatchedLiterals :: Int -> L.Literal -> (L.Literal -> Int -> Solver a) -
 normalizeWatchedLiterals clauseNum falseLit k = do
   wl <- asks eWatchlist
   let watchArray = wlClauseWatches wl
-  watch1 <- liftIO $ MA.readArray watchArray watchesBegin
-  watch2 <- liftIO $ MA.readArray watchArray (watchesBegin + 1)
+  watch1 <- liftIO $ UMA.readArray watchArray watchesBegin
+  watch2 <- liftIO $ UMA.readArray watchArray (watchesBegin + 1)
   case watch1 == falseLit of
     True -> k watch2 watchesBegin
     False -> k watch1 (watchesBegin + 1)
@@ -301,7 +302,7 @@ undoDecisionLevel kUnsat kDone k = go
       let nLits = nDecisions - lastBound
       levelBaseLit <- liftIO $ V.readVector vec lastBound
       let levelBaseVar = L.var levelBaseLit
-      levelBaseState <- liftIO $ MA.readArray (eVarStates e) levelBaseVar
+      levelBaseState <- liftIO $ UMA.readArray (eVarStates e) levelBaseVar
       liftIO $ D.traceIO ("  [bt] Current decision level is " ++ show dl ++ ", which begins at stack index " ++ show lastBound ++ ", encompassing " ++ show nLits ++ " literals")
       -- If we tried both, backtrack again.  If we can't backtrack
       -- anymore, call the unsat continuation
@@ -320,7 +321,7 @@ undoDecisionLevel kUnsat kDone k = go
             False -> go
             True -> do
               -- Restore the state of the next variable we will try to assign
-              liftIO $ MA.writeArray (eVarStates e) levelBaseVar levelBaseState
+              liftIO $ UMA.writeArray (eVarStates e) levelBaseVar levelBaseState
               liftIO $ writeIORef (eNextVar e) levelBaseVar
               kDone
     undo s ix nDecisions
@@ -362,8 +363,8 @@ withNextDecidedLiteral kDone kLit = do
     go e lv nv
       | nv > lv = kDone
       | otherwise = do
-          state <- liftIO $ MA.readArray (eVarStates e) nv
-          dl <- liftIO $ MA.readArray (eVarLevels e) nv
+          state <- liftIO $ UMA.readArray (eVarStates e) nv
+          dl <- liftIO $ UMA.readArray (eVarLevels e) nv
           case () of
             _ | dl >= 0 || state == L.triedBoth -> do
                   liftIO $ D.traceIO ("[WNDL] Skipping already assigned var " ++ show nv ++ " because " ++ show (dl, state))
@@ -385,7 +386,7 @@ assertLiteral lit = do
   e <- ask
   let var = L.var lit
       val = L.satisfyLiteral lit
-  curState <- liftIO $ MA.readArray (eVarStates e) var
+  curState <- liftIO $ UMA.readArray (eVarStates e) var
   assignVariableValue var val (L.nextValueState val curState)
   liftIO $ V.unsafePush (eDecisionStack e) lit
 {-# INLINE assertLiteral #-}
@@ -413,9 +414,9 @@ assignVariableValue var val st = do
   dl <- getDecisionLevel
   liftIO $ do
     D.traceIO ("  [assign] Assigning " ++ show val ++ " to " ++ show var)
-    MA.writeArray (eAssignment e) var val
-    MA.writeArray (eVarStates e) var st
-    MA.writeArray (eVarLevels e) var dl
+    UMA.writeArray (eAssignment e) var val
+    UMA.writeArray (eVarStates e) var st
+    UMA.writeArray (eVarLevels e) var dl
 {-# INLINE assignVariableValue #-}
 
 resetVariable :: L.Variable -> Solver ()
@@ -423,21 +424,21 @@ resetVariable var = do
   e <- ask
   liftIO $ do
     D.traceIO ("[reset] Setting the state of " ++ show var ++ " to triedNothing")
-    MA.writeArray (eAssignment e) var L.unassigned
-    MA.writeArray (eVarStates e) var L.triedNothing
-    MA.writeArray (eVarLevels e) var (-1)
+    UMA.writeArray (eAssignment e) var L.unassigned
+    UMA.writeArray (eVarStates e) var L.triedNothing
+    UMA.writeArray (eVarLevels e) var (-1)
 {-# INLINE resetVariable #-}
 
 lookupVariableAssignment :: L.Variable -> Solver L.Value
 lookupVariableAssignment var = do
   vals <- asks eAssignment
-  liftIO $ MA.readArray vals var
+  liftIO $ UMA.readArray vals var
 {-# INLINE lookupVariableAssignment #-}
 
 lookupVariableState :: L.Variable -> Solver L.State
 lookupVariableState var = do
   states <- asks eVarStates
-  liftIO $ MA.readArray states var
+  liftIO $ UMA.readArray states var
 {-# INLINE lookupVariableState #-}
 
 extractAssignment :: Solver (UA.UArray L.Variable L.Value)

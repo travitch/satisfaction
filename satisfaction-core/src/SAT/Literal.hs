@@ -50,12 +50,21 @@ import qualified Data.Array.Base as BA
 import Data.Bits
 import Data.Int ( Int8 )
 import Data.Ix ( Ix )
+import qualified Data.Ix.Unsafe as UI
 
 newtype Variable = MkVariable { varAsInt :: Int }
                  deriving (Eq, Ord, Show, Ix)
 
+instance UI.Ix0 Variable where
+  {-# INLINE unsafeToIndex #-}
+  unsafeToIndex = varAsInt
+
 newtype Literal = MkLiteral { litAsInt :: Int }
                 deriving (Eq, Ord, Show, Ix)
+
+instance UI.Ix0 Literal where
+  {-# INLINE unsafeToIndex #-}
+  unsafeToIndex = litAsInt
 
 -- | Flip a literal from pos to neg (or neg to pos)
 neg :: Literal -> Literal
