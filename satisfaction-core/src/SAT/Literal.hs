@@ -31,6 +31,7 @@ module SAT.Literal (
   liftedTrue,
   liftedFalse,
   unassigned,
+  isUnassigned,
   nextValue,
   nextValueState
   ) where
@@ -123,6 +124,13 @@ liftedFalse = MkValue { valueAsInt = 1 }
 
 unassigned :: Value
 unassigned = MkValue { valueAsInt = 2 }
+
+-- | A predicate to see if a value is unassigned.  We use this instead
+-- of an equality check because unassigned can actually work out to be
+-- 2 or 3 due to a quirk in litValue or satisfyLiteral.
+isUnassigned :: Value -> Bool
+isUnassigned = (>= unassigned)
+{-# INLINE isUnassigned #-}
 
 -- | Compute the 'Value' that satisfies the given 'Literal'
 --

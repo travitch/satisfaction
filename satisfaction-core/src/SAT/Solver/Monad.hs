@@ -78,8 +78,6 @@ data Watchlist =
 -- The solver Monad, which is just an opaque IO Monad with a Reader
 -- environment
 
-
-
 -- | The Reader environment.  We quantify away the type parameter to
 -- the formula because we never need to look at its reverse mapping.
 --
@@ -166,7 +164,7 @@ updateWatchlists l kConflict kNext = do
       -- an assignment that cause a conflict, but the conflicting
       -- update is in the queue and not processed yet.
       case () of
-        _ | val >= L.unassigned -> do
+        _ | L.isUnassigned val -> do
               liftIO $ D.traceIO ("    [uw] Asserting a literal during watchlist update: " ++ show otherLit)
               watching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
               liftIO $ UMA.writeArray (wlLitWatches wl) falseLit (watching Seq.|> clauseNum)
