@@ -105,8 +105,6 @@ data Env = forall a . Env { eWatchlist :: {-# UNPACK #-} !Watchlist
                           , eLastVar :: {-# UNPACK #-} !(IORef L.Variable)
                           , eNextVar :: {-# UNPACK #-} !(IORef L.Variable)
                             -- ^ The next variable to assign when we have to make a decision
-                          -- , eDecisionLevel :: {-# UNPACK #-} !(IORef Int)
-                            -- ^ The current decision level, used to figure out how to backtrack
                           , eCNF :: C.CNF a
                           }
 
