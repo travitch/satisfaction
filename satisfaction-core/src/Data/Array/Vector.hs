@@ -12,7 +12,7 @@ module Data.Array.Vector (
   unsafePush,
   pop,
   readVector,
-  writeVector
+  removeElement
   ) where
 
 import Control.Monad ( when )
@@ -60,10 +60,18 @@ pop v n = do
   writeIORef (vSize v) (max 0 (sz - n))
 {-# INLINE pop #-}
 
+-- | Remove an element by swapping it with the last element and then
+-- popping.
+--
+-- This function is only valid for non-empty vectors.
+removeElement :: (MA.MArray a e IO) => Vector a e -> Int -> IO ()
+removeElement v ix = do
+  sz <- size v
+  lastElt <- readVector v (sz - 1)
+  DA.writeArray (vArray v) ix lastElt
+  pop v 1
+{-# INLINE removeElement #-}
+
 readVector :: (MA.MArray a e IO) => Vector a e -> Int -> IO e
 readVector v ix = DA.readArray (vArray v) ix
 {-# INLINE readVector #-}
-
-writeVector :: (MA.MArray a e IO) => Vector a e -> Int -> e -> IO ()
-writeVector v ix e = DA.writeArray (vArray v) ix e
-{-# INLINE writeVector #-}

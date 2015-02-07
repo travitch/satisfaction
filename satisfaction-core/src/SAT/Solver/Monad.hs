@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -38,10 +39,9 @@ import qualified Data.Array.IO as IOA
 import qualified Data.Array.MArray as MA
 import qualified Data.Array.Unboxed as UA
 import Data.Bits ( shiftL )
+import qualified Data.Foldable as F
 import Data.IORef
-import Data.Ix ( rangeSize )
-import Data.Sequence ( Seq )
-import qualified Data.Sequence as Seq
+import Data.Ix ( range, rangeSize )
 import qualified Data.Set as S
 
 import qualified Data.Array.Traverse as AT
@@ -64,7 +64,7 @@ type ClauseNumber = Int
 -- Singleton clauses will be processed immediately and have sentinel
 -- values in this structure.
 data Watchlist =
-  Watchlist { wlLitWatches :: {-# UNPACK #-} !(IOA.IOArray L.Literal (Seq ClauseNumber))
+  Watchlist { wlLitWatches :: {-# UNPACK #-} !(IOA.IOArray L.Literal (V.Vector IOA.IOUArray ClauseNumber))
               -- ^ This array is of length @2n@.  Index @i@ is the
               -- list of clauses (by index) watching literal @i@.
               -- Index @2i+1@ is the list of clauses watching @~i@.
@@ -140,18 +140,15 @@ updateWatchlists l kConflict kNext = do
                    Env { eCNF = cnf } -> C.clauseArray cnf
       wl = eWatchlist e
   clausesWatching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
-  liftIO $ UMA.writeArray (wlLitWatches wl) falseLit Seq.empty
-  liftIO $ D.traceIO ("  [uw] Initial clauses watching " ++ show falseLit ++ ": " ++ show clausesWatching)
-  go clauses clausesWatching
+  go clauses clausesWatching 0
   where
     falseLit = L.neg l
     -- This is invoked if we can't find another literal to watch.
     -- This means that the clause is unit and we can try to satisfy it
     -- by satisfying the remaining variable.
-    kUnit clauseNum otherLit watchers clauses rest = do
+    kUnit clauseNum otherLit watchers clauses ix = do
       liftIO $ D.traceIO ("      [uw] Clause is unit: " ++ show clauseNum)
       val <- literalValue otherLit
-      wl <- asks eWatchlist
       -- If the other literal is unassigned, we can assign it (and
       -- implicitly enqueue it to propagate units).  It cannot be
       -- True, because we handle that in a case of 'go' (see the
@@ -164,30 +161,25 @@ updateWatchlists l kConflict kNext = do
       case () of
         _ | L.isUnassigned val -> do
               liftIO $ D.traceIO ("    [uw] Asserting a literal during watchlist update: " ++ show otherLit)
-              watching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
-              liftIO $ UMA.writeArray (wlLitWatches wl) falseLit (watching Seq.|> clauseNum)
               assertLiteral otherLit
-              go clauses rest
+              go clauses watchers (ix + 1)
           | otherwise -> do
               liftIO $ D.traceIO ("    [uw] Encountered a unit conflict due to " ++ show otherLit ++ ", which is assigned " ++ show val)
-              watching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
-              liftIO $ UMA.writeArray (wlLitWatches wl) falseLit (watchers Seq.>< watching)
-              liftIO $ D.traceIO ("        [uw/conflict] Clauses watching " ++ show falseLit ++ ": " ++ show (watchers Seq.>< watching))
               kConflict Conflict
-    go clauses watchers = do
-      wl <- asks eWatchlist
-      case Seq.viewl watchers of
-        Seq.EmptyL -> do
+    go clauses watchers ix = do
+      sz <- liftIO $ V.size watchers
+      case ix < sz of
+        False -> do
           liftIO $ D.traceIO ("      [uw] Successfully updated all watches")
           -- We have successfully found a new set of consistent
           -- watches
-          watches <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
-          liftIO $ D.traceIO ("        [uw/success] Clauses watching " ++ show falseLit ++ ": " ++ show watches)
           kNext
-        clauseNum Seq.:< rest -> do
+        True -> do
+          clauseNum <- liftIO $ V.readVector watchers ix
           let cl = clauses A.! clauseNum
           liftIO $ D.traceIO ("      [uw] Updating watches for clause " ++ show cl)
           normalizeWatchedLiterals clauseNum falseLit $ \otherLit falseLitIndex -> do
+            wl <- asks eWatchlist
             -- falseLit is @¬l@ and known to be false.  It is at the
             -- given index.  We have to check to see if the other lit
             -- is true; if so, this clause is satisfied and we don't
@@ -195,17 +187,23 @@ updateWatchlists l kConflict kNext = do
             otherVal <- literalValue otherLit
             case otherVal == L.liftedTrue of
               True -> do
+                -- The clause is satisfied, so we don't need to change our watches at all.
                 liftIO $ D.traceIO "      [uw] Satisfied clause"
-                watches <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
-                liftIO $ UMA.writeArray (wlLitWatches wl) falseLit (watches Seq.|> clauseNum)
-                go clauses rest
+                go clauses watchers (ix + 1)
               False -> do
-                -- Find a new lit to watch instead of falseLit
-                withTrueOrUnassignedLiteral (kUnit clauseNum otherLit watchers clauses rest) cl otherLit $ \newWatchedLit -> do
+                -- Find a new lit to watch instead of falseLit.  If
+                -- this succeeds, we need to remove the clause at @ix@
+                -- (which is @clauseNum@) and add @clauseNum@ to the appropriate list
+                let whenUnit = kUnit clauseNum otherLit watchers clauses ix
+                withTrueOrUnassignedLiteral whenUnit cl otherLit $ \newWatchedLit -> do
                   liftIO $ UMA.writeArray (wlClauseWatches wl) falseLitIndex newWatchedLit
+                  liftIO $ V.removeElement watchers ix
                   watchingLit <- liftIO $ UMA.readArray (wlLitWatches wl) newWatchedLit
-                  liftIO $ UMA.writeArray (wlLitWatches wl) newWatchedLit (watchingLit Seq.|> clauseNum)
-                  go clauses rest
+                  liftIO $ V.unsafePush watchingLit clauseNum
+                  -- We don't increment @ix@ because we removed the
+                  -- element that was at @ix@ and replaced it with a
+                  -- new one, so we need to check ix again.
+                  go clauses watchers ix
 {-# INLINE updateWatchlists #-}
 
 literalValue :: L.Literal -> Solver L.Value
@@ -456,11 +454,9 @@ runSolver cnf comp = do
   let vrange@(lowVar, highVar) = variableRange cnf
       lrange = (L.toPositiveLiteral lowVar, L.toNegativeLiteral highVar)
       nLits = rangeSize lrange
-      nClauses = C.clauseCount cnf
   -- There is an assignment for each variable
   assignment <- MA.newArray vrange L.unassigned
-  watchlist <- Watchlist <$> MA.newArray lrange Seq.empty
-                         <*> MA.newArray (0, 2 * nClauses - 1) L.invalidLiteral
+  watchlist <- allocateWatchlist cnf lrange
   -- We only need the decision stack to be able to hold all of the literals
   decisionStack <- V.new nLits L.invalidLiteral
   decisionBounds <- V.new nLits (-1)
@@ -519,6 +515,20 @@ instance Applicative Solver where
 liftIO :: IO a -> Solver a
 liftIO a = S $ \_ -> a
 
+allocateWatchlist :: C.CNF a -> (L.Literal, L.Literal) -> IO Watchlist
+allocateWatchlist cnf lrange = do
+  litWatches <- MA.newArray_ lrange
+  F.forM_ lits $ \l -> do
+    v <- V.new nClauses (-1)
+    MA.writeArray litWatches l v
+  clauseWatches <- MA.newArray (0, 2 * nClauses - 1) L.invalidLiteral
+  return $ Watchlist { wlLitWatches = litWatches
+                     , wlClauseWatches = clauseWatches
+                     }
+  where
+    nClauses = C.clauseCount cnf
+    lits = range lrange
+
 -- | Initialize the watches.  Each clause starts by watching its first
 -- two literals.  Clauses with only one literal are unit clauses,
 -- whose literals are automatically inserted into the worklist
@@ -537,9 +547,9 @@ initializeWatches cnf = do
           MA.writeArray (wlClauseWatches wl) (2 * ix + 1) l2
           let varWatches = wlLitWatches wl
           l1w <- MA.readArray varWatches l1
-          MA.writeArray varWatches l1 (l1w Seq.|> ix)
+          V.push l1w ix
           l2w <- MA.readArray varWatches l2
-          MA.writeArray varWatches l2 (l2w Seq.|> ix)
+          V.push l2w ix
         l : [] -> do
           assertLiteral l
           liftIO $ do
@@ -547,7 +557,7 @@ initializeWatches cnf = do
             MA.writeArray (wlClauseWatches wl) (2 * ix + 1) l
             let varWatches = wlLitWatches wl
             lw <- MA.readArray varWatches l
-            MA.writeArray varWatches l (lw Seq.|> ix)
+            V.push lw ix
         [] -> return ()
 
 -- Basic helpers
