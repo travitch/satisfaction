@@ -226,13 +226,14 @@ normalizeWatchedLiterals :: Int -> L.Literal -> (L.Literal -> Int -> Solver a) -
 normalizeWatchedLiterals clauseNum falseLit k = do
   wl <- asks eWatchlist
   let watchArray = wlClauseWatches wl
-  watch1 <- liftIO $ UMA.readArray watchArray watchesBegin
-  watch2 <- liftIO $ UMA.readArray watchArray (watchesBegin + 1)
+  watch1 <- liftIO $ UMA.readArray watchArray watch1Ix
+  watch2 <- liftIO $ UMA.readArray watchArray watch2Ix
   case watch1 == falseLit of
-    True -> k watch2 watchesBegin
-    False -> k watch1 (watchesBegin + 1)
+    True -> k watch2 watch1Ix
+    False -> k watch1 watch2Ix
   where
-    watchesBegin = clauseNum `shiftL` 1
+    watch1Ix = clauseNum `shiftL` 1
+    watch2Ix = watch1Ix + 1
 {-# INLINE normalizeWatchedLiterals #-}
 
 withTrueOrUnassignedLiteral :: Solver a -- ^ Continuation for the case we can't find a new literal to watch
