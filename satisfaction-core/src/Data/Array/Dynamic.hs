@@ -57,10 +57,10 @@ getBounds da = do
 -- The values at the new indexes are undefined.  Values at the old
 -- indexes remain the same.
 grow :: (MA.MArray a e IO, Ix i) => DArray a i e -> (i, i) -> IO ()
-grow da oldBounds@(newLower, newUpper) = do
-  (oldLower, oldUpper) <- getBounds da
-  let newBounds = (min oldLower newLower, max oldUpper newUpper)
-  case newBounds == oldBounds of
+grow da newBounds@(newLower, newUpper) = do
+  oldBounds@(oldLower, oldUpper) <- getBounds da
+  let unionBounds = (min oldLower newLower, max oldUpper newUpper)
+  case unionBounds == oldBounds of
     True -> return ()
     False -> do
       a0 <- readIORef (daArray da)
