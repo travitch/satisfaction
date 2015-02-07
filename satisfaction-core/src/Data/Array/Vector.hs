@@ -11,7 +11,8 @@ module Data.Array.Vector (
   push,
   unsafePush,
   pop,
-  readVector
+  readVector,
+  writeVector
   ) where
 
 import Control.Monad ( when )
@@ -62,3 +63,7 @@ pop v n = do
 readVector :: (MA.MArray a e IO) => Vector a e -> Int -> IO e
 readVector v ix = DA.readArray (vArray v) ix
 {-# INLINE readVector #-}
+
+writeVector :: (MA.MArray a e IO) => Vector a e -> Int -> e -> IO ()
+writeVector v ix e = DA.writeArray (vArray v) ix e
+{-# INLINE writeVector #-}
