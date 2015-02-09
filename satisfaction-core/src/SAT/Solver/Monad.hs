@@ -63,11 +63,11 @@ type ClauseNumber = Int
 -- Singleton clauses will be processed immediately and have sentinel
 -- values in this structure.
 data Watchlist =
-  Watchlist { wlLitWatches :: {-# UNPACK #-} !(IOA.IOArray L.Literal (V.Vector IOA.IOUArray ClauseNumber))
+  Watchlist { wlLitWatches :: IOA.IOArray L.Literal (V.Vector IOA.IOUArray ClauseNumber)
               -- ^ This array is of length @2n@.  Index @i@ is the
               -- list of clauses (by index) watching literal @i@.
               -- Index @2i+1@ is the list of clauses watching @~i@.
-            , wlClauseWatches :: {-# UNPACK #-} !(IOA.IOUArray ClauseNumber L.Literal)
+            , wlClauseWatches :: IOA.IOUArray ClauseNumber L.Literal
               -- ^ The array is of length @2c@ where @c@ is the number
               -- of clauses.  Index @2i@ is the first literal being
               -- watched for clause @i@.  Index @2i+1@ is the second
@@ -85,24 +85,24 @@ data Watchlist =
 --
 -- The decision level is the next variable we need to choose a value
 -- for.
-data Env = forall a . Env { eWatchlist :: {-# UNPACK #-} !Watchlist
-                          , eAssignment :: {-# UNPACK #-} !(IOA.IOUArray L.Variable L.Value)
-                          , eVarStates :: {-# UNPACK #-} !(IOA.IOUArray L.Variable L.State)
-                          , eDecisionStack :: {-# UNPACK #-} !(V.Vector IOA.IOUArray L.Literal)
+data Env = forall a . Env { eWatchlist :: Watchlist
+                          , eAssignment :: IOA.IOUArray L.Variable L.Value
+                          , eVarStates :: IOA.IOUArray L.Variable L.State
+                          , eDecisionStack :: V.Vector IOA.IOUArray L.Literal
                             -- ^ A record of the decisions made
-                          , eDecisionBoundaries :: {-# UNPACK #-} !(V.Vector IOA.IOUArray Int)
+                          , eDecisionBoundaries :: V.Vector IOA.IOUArray Int
                             -- ^ Boundary markers between decision
                             -- levels in the decision stack.
-                          , eVarLevels :: {-# UNPACK #-} !(IOA.IOUArray L.Variable Int)
+                          , eVarLevels :: IOA.IOUArray L.Variable Int
                             -- ^ The decision level for each variable.
-                          , ePropagationQueue :: {-# UNPACK #-} !(IORef Int)
+                          , ePropagationQueue :: IORef Int
                             -- ^ Literals that have been assigned
                             -- False that we need to propagate units
                             -- for.  This is an index into the
                             -- decision stack.
-                          , eFirstVar :: {-# UNPACK #-} !L.Variable
-                          , eLastVar :: {-# UNPACK #-} !(IORef L.Variable)
-                          , eNextVar :: {-# UNPACK #-} !(IORef L.Variable)
+                          , eFirstVar :: L.Variable
+                          , eLastVar :: IORef L.Variable
+                          , eNextVar :: IORef L.Variable
                             -- ^ The next variable to assign when we have to make a decision
                           , eCNF :: C.CNF a
                           }
