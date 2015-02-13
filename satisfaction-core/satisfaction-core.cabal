@@ -25,6 +25,7 @@ library
                    Data.Array.Heap
                    Data.Array.Traverse
                    Data.Array.Vector
+                   Data.URef
   other-modules: SAT.Solver.Monad
                  SAT.Solver.Debug
                  Data.Array.MArray.Unsafe
