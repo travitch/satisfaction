@@ -16,8 +16,8 @@ import Data.Ix ( Ix, range )
 import qualified Data.Array.MArray as MA
 
 -- | A dynamically growable mutable array
-data DArray a i e = DArray { daArray :: {-# UNPACK #-} !(IORef (a i e))
-                           }
+newtype DArray a i e = DArray { daArray :: IORef (a i e)
+                              }
 
 -- | Allocate a new array, reserving the given amount of storage
 newArray_ :: (MA.MArray a e IO, Ix i) => (i, i) -> IO (DArray a i e)

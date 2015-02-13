@@ -22,7 +22,7 @@ import qualified Data.Array.Dynamic as DA
 import qualified Data.Array.MArray as MA
 
 data Vector a e = Vector { vArray :: {-# UNPACK #-} !(DA.DArray a Int e)
-                         , vSize :: {-# UNPACK #-} !(IORef Int)
+                         , vSize :: IORef Int
                          }
 
 new :: (MA.MArray a e IO) => Int -> e -> IO (Vector a e)

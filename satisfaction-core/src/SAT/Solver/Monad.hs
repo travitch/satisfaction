@@ -86,16 +86,16 @@ data Watchlist =
 -- The decision level is the next variable we need to choose a value
 -- for.
 data Env = forall a . Env { eWatchlist :: Watchlist
-                          , eAssignment :: IOA.IOUArray L.Variable L.Value
-                          , eVarStates :: IOA.IOUArray L.Variable L.State
+                          , eAssignment :: {-# UNPACK #-} !(IOA.IOUArray L.Variable L.Value)
+                          , eVarStates :: {-# UNPACK #-} !(IOA.IOUArray L.Variable L.State)
                           , eDecisionStack :: V.Vector IOA.IOUArray L.Literal
                             -- ^ A record of the decisions made
                           , eDecisionBoundaries :: V.Vector IOA.IOUArray Int
                             -- ^ Boundary markers between decision
                             -- levels in the decision stack.
-                          , eVarLevels :: IOA.IOUArray L.Variable Int
+                          , eVarLevels :: {-# UNPACK #-} !(IOA.IOUArray L.Variable Int)
                             -- ^ The decision level for each variable.
-                          , ePropagationQueue :: IORef Int
+                          , ePropagationQueue :: {-# UNPACK #-} !(IORef Int)
                             -- ^ Literals that have been assigned
                             -- False that we need to propagate units
                             -- for.  This is an index into the
