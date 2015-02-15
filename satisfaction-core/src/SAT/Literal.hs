@@ -1,7 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UnboxedTuples #-}
 module SAT.Literal (
   -- * Literals
@@ -36,36 +34,55 @@ module SAT.Literal (
   nextValueState
   ) where
 
-import qualified GHC.Base as B
-import qualified GHC.Int as B
-import GHC.ST ( ST(..) )
+import GHC.Exts
+import GHC.Int
 
-import Control.Applicative
-import Control.Monad.ST ( stToIO )
-
-import qualified Data.Array.Unboxed as UA
-import qualified Data.Array.IO as IOA
-import qualified Data.Array.IO.Internals as IOA
-import qualified Data.Array.MArray as MA
-import qualified Data.Array.Base as BA
 import Data.Bits
-import Data.Int ( Int8 )
 import Data.Ix ( Ix )
-import qualified Data.Ix.Unsafe as UI
+import Data.Ix.Zero
+import Data.Unbox
 
 newtype Variable = MkVariable { varAsInt :: Int }
                  deriving (Eq, Ord, Show, Ix)
 
-instance UI.Ix0 Variable where
-  {-# INLINE unsafeToIndex #-}
-  unsafeToIndex = varAsInt
+instance IxZero Variable where
+  {-# INLINE toZeroIndex #-}
+  {-# INLINE fromZeroIndex #-}
+  toZeroIndex = varAsInt
+  fromZeroIndex = MkVariable
+
+instance Unbox Variable where
+  {-# INLINE unboxBytes #-}
+  unboxBytes _ = unboxBytes (Proxy :: Proxy Int)
+  {-# INLINE unboxIndex #-}
+  unboxIndex ba ix = MkVariable (I# (indexIntArray# ba ix))
+  {-# INLINE unboxWrite #-}
+  unboxWrite mba ix (MkVariable (I# elt)) s# = writeIntArray# mba ix elt s#
+  {-# INLINE unboxRead #-}
+  unboxRead mba ix s# =
+    case readIntArray# mba ix s# of
+      (# s'#, i# #) -> (# s'#, MkVariable (I# i#) #)
 
 newtype Literal = MkLiteral { litAsInt :: Int }
                 deriving (Eq, Ord, Show, Ix)
 
-instance UI.Ix0 Literal where
-  {-# INLINE unsafeToIndex #-}
-  unsafeToIndex = litAsInt
+instance Unbox Literal where
+  {-# INLINE unboxBytes #-}
+  unboxBytes _ = unboxBytes (Proxy :: Proxy Int)
+  {-# INLINE unboxIndex #-}
+  unboxIndex ba ix = MkLiteral (I# (indexIntArray# ba ix))
+  {-# INLINE unboxWrite #-}
+  unboxWrite mba ix (MkLiteral (I# elt)) s# = writeIntArray# mba ix elt s#
+  {-# INLINE unboxRead #-}
+  unboxRead mba ix s# =
+    case readIntArray# mba ix s# of
+      (# s'#, i# #) -> (# s'#, MkLiteral (I# i#) #)
+
+instance IxZero Literal where
+  {-# INLINE toZeroIndex #-}
+  {-# INLINE fromZeroIndex #-}
+  toZeroIndex = litAsInt
+  fromZeroIndex = MkLiteral
 
 -- | Flip a literal from pos to neg (or neg to pos)
 neg :: Literal -> Literal
@@ -116,6 +133,18 @@ invalidLiteral = MkLiteral (-1)
 newtype Value = MkValue { valueAsInt :: Int8 }
               deriving (Eq, Ord, Show)
 
+instance Unbox Value where
+  {-# INLINE unboxBytes #-}
+  unboxBytes _ = 1
+  {-# INLINE unboxIndex #-}
+  unboxIndex ba ix = MkValue (I8# (indexInt8Array# ba ix))
+  {-# INLINE unboxWrite #-}
+  unboxWrite mba ix (MkValue (I8# elt)) s# = writeInt8Array# mba ix elt s#
+  {-# INLINE unboxRead #-}
+  unboxRead mba ix s# =
+    case readInt8Array# mba ix s# of
+      (# s'#, i# #) -> (# s'#, MkValue (I8# i#) #)
+
 liftedTrue :: Value
 liftedTrue = MkValue { valueAsInt = 0 }
 
@@ -153,6 +182,18 @@ litValue l v = MkValue { valueAsInt = valueAsInt v `xor` fromIntegral (litAsInt 
 newtype State = MkState { stateAsInt :: Int8 }
               deriving (Eq, Ord, Show)
 
+instance Unbox State where
+  {-# INLINE unboxBytes #-}
+  unboxBytes _ = 1
+  {-# INLINE unboxIndex #-}
+  unboxIndex ba ix = MkState (I8# (indexInt8Array# ba ix))
+  {-# INLINE unboxWrite #-}
+  unboxWrite mba ix (MkState (I8# elt)) s# = writeInt8Array# mba ix elt s#
+  {-# INLINE unboxRead #-}
+  unboxRead mba ix s# =
+    case readInt8Array# mba ix s# of
+      (# s'#, i# #) -> (# s'#, MkState (I8# i#) #)
+
 triedNothing :: State
 triedNothing = MkState { stateAsInt = 0 }
 
@@ -176,92 +217,6 @@ nextLiteral v s = MkLiteral ((varAsInt v `shiftL` 1) .|. fromIntegral (stateAsIn
 nextValueState :: Value -> State -> State
 nextValueState val st = MkState $ stateAsInt st .|. (1 + fromIntegral (valueAsInt val))
 {-# INLINE nextValueState #-}
-
--- Verbose array instances
-
-deriving instance BA.IArray UA.UArray Literal
-
-instance MA.MArray (BA.STUArray s) Literal (ST s) where
-  {-# INLINE getBounds #-}
-  getBounds (BA.STUArray l u _ _) = return (l, u)
-  {-# INLINE getNumElements #-}
-  getNumElements (BA.STUArray _ _ n _) = return n
-  {-# INLINE unsafeRead #-}
-  unsafeRead (BA.STUArray _ _ _ marr#) (B.I# i#) = ST $ \s1# ->
-    case B.readIntArray# marr# i# s1# of
-      (# s2#, e# #) -> (# s2#, MkLiteral (B.I# e#) #)
-  {-# INLINE unsafeWrite #-}
-  unsafeWrite (BA.STUArray _ _ _ marr#) (B.I# i#) (MkLiteral (B.I# e#)) = ST $ \s1# ->
-    case B.writeIntArray# marr# i# e# s1# of
-      s2# -> (# s2#, () #)
-  unsafeNewArray_ (l, u) = BA.unsafeNewArraySTUArray_ (l, u) BA.wORD_SCALE
-
-instance MA.MArray IOA.IOUArray Literal IO where
-  {-# INLINE getBounds #-}
-  getBounds (IOA.IOUArray arr) = stToIO $ BA.getBounds arr
-  {-# INLINE getNumElements #-}
-  getNumElements (IOA.IOUArray arr) = stToIO $ BA.getNumElements arr
-  {-# INLINE unsafeRead #-}
-  unsafeRead (IOA.IOUArray arr) i = stToIO $ BA.unsafeRead arr i
-  {-# INLINE unsafeWrite #-}
-  unsafeWrite (IOA.IOUArray arr) i e = stToIO $ BA.unsafeWrite arr i e
-  unsafeNewArray_ bounds = stToIO (IOA.IOUArray <$> BA.unsafeNewArray_ bounds)
-
-deriving instance BA.IArray UA.UArray Value
-
-instance MA.MArray (BA.STUArray s) Value (ST s) where
-  {-# INLINE getBounds #-}
-  getBounds (BA.STUArray l u _ _) = return (l, u)
-  {-# INLINE getNumElements #-}
-  getNumElements (BA.STUArray _ _ n _) = return n
-  {-# INLINE unsafeRead #-}
-  unsafeRead (BA.STUArray _ _ _ marr#) (B.I# i#) = ST $ \s1# ->
-    case B.readInt8Array# marr# i# s1# of
-      (# s2#, e# #) -> (# s2#, MkValue (B.I8# e#) #)
-  {-# INLINE unsafeWrite #-}
-  unsafeWrite (BA.STUArray _ _ _ marr#) (B.I# i#) (MkValue (B.I8# e#)) = ST $ \s1# ->
-    case B.writeInt8Array# marr# i# e# s1# of
-      s2# -> (# s2#, () #)
-  unsafeNewArray_ (l, u) = BA.unsafeNewArraySTUArray_ (l, u) (\x -> x)
-
-instance MA.MArray IOA.IOUArray Value IO where
-  {-# INLINE getBounds #-}
-  getBounds (IOA.IOUArray arr) = stToIO $ BA.getBounds arr
-  {-# INLINE getNumElements #-}
-  getNumElements (IOA.IOUArray arr) = stToIO $ BA.getNumElements arr
-  {-# INLINE unsafeRead #-}
-  unsafeRead (IOA.IOUArray arr) i = stToIO $ BA.unsafeRead arr i
-  {-# INLINE unsafeWrite #-}
-  unsafeWrite (IOA.IOUArray arr) i e = stToIO $ BA.unsafeWrite arr i e
-  unsafeNewArray_ bounds = stToIO (IOA.IOUArray <$> BA.unsafeNewArray_ bounds)
-
-deriving instance BA.IArray UA.UArray State
-
-instance MA.MArray (BA.STUArray s) State (ST s) where
-  {-# INLINE getBounds #-}
-  getBounds (BA.STUArray l u _ _) = return (l, u)
-  {-# INLINE getNumElements #-}
-  getNumElements (BA.STUArray _ _ n _) = return n
-  {-# INLINE unsafeRead #-}
-  unsafeRead (BA.STUArray _ _ _ marr#) (B.I# i#) = ST $ \s1# ->
-    case B.readInt8Array# marr# i# s1# of
-      (# s2#, e# #) -> (# s2#, MkState (B.I8# e#) #)
-  {-# INLINE unsafeWrite #-}
-  unsafeWrite (BA.STUArray _ _ _ marr#) (B.I# i#) (MkState (B.I8# e#)) = ST $ \s1# ->
-    case B.writeInt8Array# marr# i# e# s1# of
-      s2# -> (# s2#, () #)
-  unsafeNewArray_ (l, u) = BA.unsafeNewArraySTUArray_ (l, u) (\x -> x)
-
-instance MA.MArray IOA.IOUArray State IO where
-  {-# INLINE getBounds #-}
-  getBounds (IOA.IOUArray arr) = stToIO $ BA.getBounds arr
-  {-# INLINE getNumElements #-}
-  getNumElements (IOA.IOUArray arr) = stToIO $ BA.getNumElements arr
-  {-# INLINE unsafeRead #-}
-  unsafeRead (IOA.IOUArray arr) i = stToIO $ BA.unsafeRead arr i
-  {-# INLINE unsafeWrite #-}
-  unsafeWrite (IOA.IOUArray arr) i e = stToIO $ BA.unsafeWrite arr i e
-  unsafeNewArray_ bounds = stToIO (IOA.IOUArray <$> BA.unsafeNewArray_ bounds)
 
 {- Note [Next State]
 

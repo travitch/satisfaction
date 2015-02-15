@@ -12,7 +12,7 @@ module SAT.CNF (
   clauseAt,
   clauseLiterals,
   clauseLiteral,
-  clauseRange,
+  clauseSize,
   clauseList,
   clauseArray,
   mapSolution,
@@ -22,35 +22,36 @@ module SAT.CNF (
   ) where
 
 import Control.Monad
-import qualified Data.Array.IArray as A
-import qualified Data.Array.Unboxed as UA
+import qualified Data.Array.Prim as PA
+import qualified Data.Array.Prim.Generic as GA
+import qualified Data.Array.Prim.Unboxed as PUA
 import qualified Data.Map as M
 
 import SAT.Literal
 
-newtype Clause = MkClause { clauseAsArray :: UA.UArray Int Literal }
+newtype Clause = MkClause { clauseAsArray :: PUA.Array Int Literal }
                deriving (Eq, Ord, Show)
 
 -- | Return the 'Literal's in a 'Clause' as a list.
 --
 -- Obviously, this should not be used in a tight inner loop.
 clauseLiterals :: Clause -> [Literal]
-clauseLiterals = A.elems . clauseAsArray
+clauseLiterals = PUA.elems . clauseAsArray
 {-# INLINE clauseLiterals #-}
 
 clauseLiteral :: Clause -> Int -> Literal
-clauseLiteral c i = clauseAsArray c A.! i
+clauseLiteral c i = clauseAsArray c PUA.! i
 {-# INLINE clauseLiteral #-}
 
-clauseRange :: Clause -> (Int, Int)
-clauseRange = A.bounds . clauseAsArray
-{-# INLINE clauseRange #-}
+clauseSize :: Clause -> Int
+clauseSize = GA.plength . clauseAsArray
+{-# INLINE clauseSize #-}
 
 clauseList :: CNF a -> [Clause]
-clauseList = A.elems . cnfClauses
+clauseList = PA.elems . cnfClauses
 {-# INLINE clauseList #-}
 
-clauseArray :: CNF a -> A.Array Int Clause
+clauseArray :: CNF a -> PA.Array Int Clause
 clauseArray = cnfClauses
 {-# INLINE clauseArray #-}
 
@@ -63,14 +64,14 @@ clauseArray = cnfClauses
 -- meaning (the number of the clause).  Variables are mapped back and
 -- forth between a user-provided type @a@.
 data CNF a =
-  CNF { cnfClauses :: A.Array Int Clause
+  CNF { cnfClauses :: PA.Array Int Clause
       , cnfToVariable :: M.Map a Variable
-      , cnfFromVariable :: A.Array Variable a
+      , cnfFromVariable :: PA.Array Variable a
       }
   deriving (Eq, Ord, Show)
 
-mapSolution :: (A.IArray array Value) => CNF a -> array Variable Value -> [(a, Bool)]
-mapSolution cnf a = [ (elt, toBool (a A.! intvar))
+mapSolution :: (GA.PrimArray array Value) => CNF a -> array Variable Value -> [(a, Bool)]
+mapSolution cnf a = [ (elt, toBool (a GA.! intvar))
                     | (elt, intvar) <- M.toList (cnfToVariable cnf)
                     ]
   where
@@ -78,9 +79,7 @@ mapSolution cnf a = [ (elt, toBool (a A.! intvar))
 
 -- | Return the number of clauses in a CNF formula
 clauseCount :: CNF a -> Int
-clauseCount cnf = cc + 1
-  where
-    (0, cc) = A.bounds (cnfClauses cnf)
+clauseCount = PA.size . cnfClauses
 {-# INLINE clauseCount #-}
 
 -- | The number of distinct variables in the CNF formula
@@ -92,7 +91,7 @@ variableCount = M.size . cnfToVariable
 clauseAt :: CNF a -> Int -> Maybe Clause
 clauseAt cnf ix
   | ix >= clauseCount cnf = Nothing
-  | otherwise = Just $ cnfClauses cnf A.! ix
+  | otherwise = Just $ cnfClauses cnf GA.! ix
 {-# INLINE clauseAt #-}
 
 data Lit a = L a -- ^ A positive literal
@@ -113,22 +112,19 @@ fromSimpleList :: (MonadPlus m, Ord a) => [[Lit a]] -> m (CNF a)
 fromSimpleList (filter (not . null) -> klauses)
   | null klauses = mzero
   | otherwise =
-      return CNF { cnfClauses = A.array (0, length arrayClauses - 1) arrayClauses
+      return CNF { cnfClauses = PA.array arrayClauses
                  , cnfToVariable = toVar
                  , cnfFromVariable =
-                   A.array bounds [ (ix, val)
-                                  | (val, ix) <- M.toList toVar
-                                  ]
+                   PA.array [ (ix, val)
+                            | (val, ix) <- M.toList toVar
+                            ]
                  }
   where
-    bounds = (firstVariable, highestVariable)
-    -- @highestVar@ will always be valid because we have no null
-    -- clauses and at least one clause, hence at least one variable.
     seed = ((firstVariable, firstVariable), M.empty, [])
-    ((_, highestVariable), toVar, arrayClauses) = foldr addClause seed (zip [0..] klauses)
+    (_, toVar, arrayClauses) = foldr addClause seed (zip [0..] klauses)
     addClause (clauseIndex, clause) (vars, m, clauses) =
       let (vars', m', arrayClauseElts) = foldr toArrayClause (vars, m, []) (zip [0..] clause)
-          arrayClause = MkClause $ UA.array (0, length arrayClauseElts - 1) arrayClauseElts
+          arrayClause = MkClause $ PUA.array arrayClauseElts
       in (vars', m', (clauseIndex, arrayClause) : clauses)
     toArrayClause litRef@(ix, externalLit) (vars@(varSrc, _), m, elts) =
       let externalVar = literalVariable externalLit

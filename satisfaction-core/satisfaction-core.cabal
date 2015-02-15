@@ -22,30 +22,34 @@ library
                    SAT.CNF
                    SAT.Literal
                    Data.Array.Dynamic
+                   Data.Array.Dynamic.Unboxed
                    Data.Array.Heap
+                   Data.Array.Prim
+                   Data.Array.Prim.Generic
+                   Data.Array.Prim.Mutable
+                   Data.Array.Prim.Unboxed
+                   Data.Array.Prim.Unboxed.Mutable
                    Data.Array.Traverse
                    Data.Array.Vector
-                   Data.URef
+                   Data.Array.Vector.Unboxed
+                   Data.Ref.Prim
+                   Data.Ix.Zero
+                   Data.Unbox
   other-modules: SAT.Solver.Monad
                  SAT.Solver.Debug
-                 Data.Array.MArray.Unsafe
-                 Data.Ix.Unsafe
+                 Control.Monad.Prim
+                 Data.Array.Prim.Internal
+                 Data.Array.Prim.Unboxed.Internal
   build-depends: base >= 4.6 && < 5,
-                 containers >= 0.5 && < 0.6,
-                 array >= 0.4 && < 0.6
+                 containers >= 0.5 && < 0.6
   hs-source-dirs: src
   if flag(trace)
     hs-source-dirs: src/trace/enable
   else
     hs-source-dirs: src/trace/disable
 
-  if flag(unsafe)
-    hs-source-dirs: src/unsafe/enable
-  else
-    hs-source-dirs: src/unsafe/disable
-
   default-language: Haskell2010
-  ghc-options: -Wall
+  ghc-options: -Wall -O1
   ghc-prof-options: -auto-all
 
 test-suite satisfaction-tests

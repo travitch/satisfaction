@@ -3,8 +3,10 @@
 module Main ( main ) where
 
 import Control.Monad.IO.Class ( liftIO )
-import qualified Data.Array.IArray as A
-import qualified Data.Array.IO as IOA
+import qualified Data.Array.IArray as IA
+import qualified Data.Array.Prim.Generic as GA
+import qualified Data.Array.Prim.Mutable as PMA
+import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Language.CNF.Parse.ParseDIMACS as P
@@ -22,9 +24,9 @@ main = do
   satTests <- FP.find FP.always (FP.extension FP.==? ".cnf") "tests/cnf/sat"
   unsatTests <- FP.find FP.always (FP.extension FP.==? ".cnf") "tests/cnf/unsat"
   T.defaultMain $ T.testGroup "Satisfaction Tests" [
-    heapTests1 "UnboxedHeapTests1" allocateUnboxedHeap,
+--    heapTests1 "UnboxedHeapTests1" allocateUnboxedHeap,
     heapTests1 "BoxedHeapTests1" allocateBoxedHeap,
-    heapTests2 "UnboxedHeapTests2" allocateUnboxedHeap,
+--    heapTests2 "UnboxedHeapTests2" allocateUnboxedHeap,
     heapTests2 "BoxedHeapTests2" allocateBoxedHeap,
     dimacsTests "SatTests" satTests expectSatisfiable,
     dimacsTests "UnsatTests" unsatTests expectUnsatisfiable
@@ -52,7 +54,7 @@ convertCNF cnf0 =
   S.fromSimpleList $ map fromClause (P.clauses cnf0)
   where
     fromClause c = [ fromDIMACS e
-                   | e <- A.elems c
+                   | e <- IA.elems c
                    ]
     fromDIMACS e | e < 0 = S.N (abs e)
                  | otherwise = S.L e
@@ -69,7 +71,7 @@ expectSatisfiable cnf (Just sol) = mapM_ assertAtLeastOneTrue (P.clauses cnf)
                    | otherwise = maybe msg return (lookup l assignment)
             where
               msg = error ("Expected assignment for lit " ++ show l)
-      clauseValue <- mapM litVal (A.elems clause)
+      clauseValue <- mapM litVal (IA.elems clause)
       T.assertBool ("Expected clause to be true: " ++ show clause) (or clauseValue)
 
 expectUnsatisfiable :: P.CNF -> Maybe (S.Solution Int) -> T.Assertion
@@ -80,22 +82,22 @@ expectUnsatisfiable _ sol = T.assertEqual "Unexpected solution" Nothing sol
 intComparator :: Int -> Int -> IO Bool
 intComparator a b = return (a < b)
 
-allocateUnboxedHeap :: (Int, Int) -> IO (H.Heap IOA.IOUArray Int)
-allocateUnboxedHeap range = H.new range intComparator (-1)
+-- allocateUnboxedHeap :: Int -> IO (H.Heap PUMA.MArray IO Int)
+-- allocateUnboxedHeap range = H.new range intComparator (-1)
 
-allocateBoxedHeap :: (Int, Int) -> IO (H.Heap IOA.IOArray Int)
+allocateBoxedHeap :: Int -> IO (H.Heap IO Int)
 allocateBoxedHeap range = H.new range intComparator (-1)
 
 -- Tests that adding a bunch of elements to the heap and removing the
 -- minimum actually returns the true minimum element.
-heapTests1 :: (IOA.MArray a Int IO) => String -> ((Int, Int) -> IO (H.Heap a Int)) -> T.TestTree
+heapTests1 :: String -> (Int -> IO (H.Heap IO Int)) -> T.TestTree
 heapTests1 name allocator = QC.testProperty name $ MQC.monadicIO $ do
   let testRange = (0, 10000)
   nElts <- MQC.pick (QC.choose (0, 20))
   lst <- MQC.pick (QC.vectorOf nElts (QC.choose testRange))
   -- arbitrary can generate a negative number - we only want positive
   -- numbers here (including not zero, so always add at least one)
-  h <- liftIO $ allocator testRange
+  h <- liftIO $ allocator (snd testRange + 1)
   let minElt = minimum lst
   F.forM_ lst $ \i -> liftIO $ H.unsafeInsert h i
   mfromHeap <- liftIO $ H.takeMin h
@@ -105,14 +107,14 @@ heapTests1 name allocator = QC.testProperty name $ MQC.monadicIO $ do
     Nothing -> MQC.assert (null lst)
     Just elt -> MQC.assert (elt == minElt)
 
-heapTests2 :: (IOA.MArray a Int IO) => String -> ((Int, Int) -> IO (H.Heap a Int)) -> T.TestTree
+heapTests2 :: String -> (Int -> IO (H.Heap IO Int)) -> T.TestTree
 heapTests2 name allocator = QC.testProperty name $ MQC.monadicIO $ do
   let testRange = (0, 10000)
   nElts <- MQC.pick (QC.choose (0, 20))
   lst <- MQC.pick (QC.vectorOf nElts (QC.choose testRange))
   -- arbitrary can generate a negative number - we only want positive
   -- numbers here (including not zero, so always add at least one)
-  h <- liftIO $ allocator testRange
+  h <- liftIO $ allocator (snd testRange + 1)
   F.forM_ lst $ \i -> liftIO $ H.unsafeInsert h i
   F.forM_ (L.nub (L.sort lst)) $ \expectedElt -> do
     mfromHeap <- liftIO $ H.takeMin h

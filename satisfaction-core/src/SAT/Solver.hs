@@ -11,7 +11,7 @@ module SAT.Solver (
   ) where
 
 import Control.Applicative
-import qualified Data.Array.Unboxed as A
+import qualified Data.Array.Prim.Unboxed as PUA
 
 import qualified SAT.CNF as C
 import qualified SAT.Literal as L
@@ -27,7 +27,7 @@ data Solution a = Solution { _solutionFormula :: C.CNF a
 data ISolution = IUnsat
                | ISolution AnAssignment
 
-type AnAssignment = A.UArray L.Variable L.Value
+type AnAssignment = PUA.Array L.Variable L.Value
 
 solve :: C.CNF a -> IO (Maybe (Solution a))
 solve cnf = do

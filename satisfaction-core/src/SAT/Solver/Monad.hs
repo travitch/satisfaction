@@ -33,10 +33,11 @@ module SAT.Solver.Monad (
 
 import Control.Applicative
 import Control.Monad ( ap )
-import qualified Data.Array as A
-import qualified Data.Array.IO as IOA
-import qualified Data.Array.MArray as MA
-import qualified Data.Array.Unboxed as UA
+import qualified Data.Array.Prim as PA
+import qualified Data.Array.Prim.Generic as GA
+import qualified Data.Array.Prim.Mutable as PMA
+import qualified Data.Array.Prim.Unboxed as PUA
+import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
 import Data.Bits ( shiftL )
 import qualified Data.Foldable as F
 import Data.IORef
@@ -44,8 +45,7 @@ import Data.Ix ( range, rangeSize )
 import qualified Data.Set as S
 
 import qualified Data.Array.Traverse as AT
-import qualified Data.Array.Vector as V
-import qualified Data.Array.MArray.Unsafe as UMA
+import qualified Data.Array.Vector.Unboxed as V
 import qualified SAT.CNF as C
 import qualified SAT.Literal as L
 import qualified SAT.Solver.Debug as D
@@ -63,11 +63,11 @@ type ClauseNumber = Int
 -- Singleton clauses will be processed immediately and have sentinel
 -- values in this structure.
 data Watchlist =
-  Watchlist { wlLitWatches :: IOA.IOArray L.Literal (V.Vector IOA.IOUArray ClauseNumber)
+  Watchlist { wlLitWatches :: PMA.MArray IO L.Literal (V.Vector IO ClauseNumber)
               -- ^ This array is of length @2n@.  Index @i@ is the
               -- list of clauses (by index) watching literal @i@.
               -- Index @2i+1@ is the list of clauses watching @~i@.
-            , wlClauseWatches :: IOA.IOUArray ClauseNumber L.Literal
+            , wlClauseWatches :: PUMA.MArray IO ClauseNumber L.Literal
               -- ^ The array is of length @2c@ where @c@ is the number
               -- of clauses.  Index @2i@ is the first literal being
               -- watched for clause @i@.  Index @2i+1@ is the second
@@ -86,14 +86,14 @@ data Watchlist =
 -- The decision level is the next variable we need to choose a value
 -- for.
 data Env = forall a . Env { eWatchlist :: Watchlist
-                          , eAssignment :: {-# UNPACK #-} !(IOA.IOUArray L.Variable L.Value)
-                          , eVarStates :: {-# UNPACK #-} !(IOA.IOUArray L.Variable L.State)
-                          , eDecisionStack :: V.Vector IOA.IOUArray L.Literal
+                          , eAssignment :: PUMA.MArray IO L.Variable L.Value
+                          , eVarStates :: PUMA.MArray IO L.Variable L.State
+                          , eDecisionStack :: V.Vector IO L.Literal
                             -- ^ A record of the decisions made
-                          , eDecisionBoundaries :: V.Vector IOA.IOUArray Int
+                          , eDecisionBoundaries :: V.Vector IO Int
                             -- ^ Boundary markers between decision
                             -- levels in the decision stack.
-                          , eVarLevels :: {-# UNPACK #-} !(IOA.IOUArray L.Variable Int)
+                          , eVarLevels :: PUMA.MArray IO L.Variable Int
                             -- ^ The decision level for each variable.
                           , ePropagationQueue :: {-# UNPACK #-} !(IORef Int)
                             -- ^ Literals that have been assigned
@@ -138,7 +138,7 @@ updateWatchlists l kConflict kNext = do
   let clauses = case e of
                    Env { eCNF = cnf } -> C.clauseArray cnf
       wl = eWatchlist e
-  clausesWatching <- liftIO $ UMA.readArray (wlLitWatches wl) falseLit
+  clausesWatching <- liftIO $ PMA.unsafeReadArray (wlLitWatches wl) falseLit
   go clauses clausesWatching 0
   where
     falseLit = L.neg l
@@ -174,8 +174,8 @@ updateWatchlists l kConflict kNext = do
           -- watches
           kNext
         True -> do
-          clauseNum <- liftIO $ V.readVector watchers ix
-          let cl = clauses A.! clauseNum
+          clauseNum <- liftIO $ V.unsafeReadVector watchers ix
+          let cl = clauses PA.! clauseNum
           liftIO $ D.traceIO ("      [uw] Updating watches for clause " ++ show cl)
           normalizeWatchedLiterals clauseNum falseLit $ \otherLit falseLitIndex -> do
             wl <- asks eWatchlist
@@ -195,9 +195,9 @@ updateWatchlists l kConflict kNext = do
                 -- (which is @clauseNum@) and add @clauseNum@ to the appropriate list
                 let whenUnit = kUnit clauseNum otherLit watchers clauses ix
                 withTrueOrUnassignedLiteral whenUnit cl otherLit $ \newWatchedLit -> do
-                  liftIO $ UMA.writeArray (wlClauseWatches wl) falseLitIndex newWatchedLit
+                  liftIO $ PUMA.unsafeWriteArray (wlClauseWatches wl) falseLitIndex newWatchedLit
                   liftIO $ V.removeElement watchers ix
-                  watchingLit <- liftIO $ UMA.readArray (wlLitWatches wl) newWatchedLit
+                  watchingLit <- liftIO $ PMA.unsafeReadArray (wlLitWatches wl) newWatchedLit
                   liftIO $ V.unsafePush watchingLit clauseNum
                   -- We don't increment @ix@ because we removed the
                   -- element that was at @ix@ and replaced it with a
@@ -208,7 +208,7 @@ updateWatchlists l kConflict kNext = do
 literalValue :: L.Literal -> Solver L.Value
 literalValue l = do
   assignments <- asks eAssignment
-  val <- liftIO $ UMA.readArray assignments (L.var l)
+  val <- liftIO $ PUMA.unsafeReadArray assignments (L.var l)
   return $ L.litValue l val
 {-# INLINE literalValue #-}
 
@@ -219,8 +219,8 @@ normalizeWatchedLiterals :: Int -> L.Literal -> (L.Literal -> Int -> Solver a) -
 normalizeWatchedLiterals clauseNum falseLit k = do
   wl <- asks eWatchlist
   let watchArray = wlClauseWatches wl
-  watch1 <- liftIO $ UMA.readArray watchArray watch1Ix
-  watch2 <- liftIO $ UMA.readArray watchArray watch2Ix
+  watch1 <- liftIO $ PUMA.unsafeReadArray watchArray watch1Ix
+  watch2 <- liftIO $ PUMA.unsafeReadArray watchArray watch2Ix
   case watch1 == falseLit of
     True -> k watch2 watch1Ix
     False -> k watch1 watch2Ix
@@ -234,10 +234,11 @@ withTrueOrUnassignedLiteral :: Solver a -- ^ Continuation for the case we can't 
                             -> L.Literal -- ^ The literal we don't want to choose (because we are already watching it)
                             -> (L.Literal -> Solver a) -- ^ The continuation to call with the new literal
                             -> Solver a
-withTrueOrUnassignedLiteral kConflict clause ignoreLit withLit = go low
+withTrueOrUnassignedLiteral kConflict clause ignoreLit withLit = go 0
   where
-    (low, high) = C.clauseRange clause
-    go ix | ix > high = kConflict
+    sz = C.clauseSize clause
+--    (low, high) = C.clauseRange clause
+    go ix | ix >= sz = kConflict
           | otherwise = do
               let l = clause `C.clauseLiteral` ix
               case l == ignoreLit of
@@ -269,7 +270,7 @@ withQueuedDecision kEmpty kProp = do
   case decisionIndex >= sz of
     True -> kEmpty
     False -> do
-      lit <- liftIO $ V.readVector dvec decisionIndex
+      lit <- liftIO $ V.unsafeReadVector dvec decisionIndex
       liftIO $ modifyIORef' qref (+1)
       kProp lit
 {-# INLINE withQueuedDecision #-}
@@ -292,11 +293,11 @@ undoDecisionLevel kUnsat kDone k = go
           boundaries = eDecisionBoundaries e
       nDecisions <- liftIO $ V.size vec
       nBounds <- liftIO $ V.size boundaries
-      lastBound <- liftIO $ V.readVector boundaries (nBounds - 1)
+      lastBound <- liftIO $ V.unsafeReadVector boundaries (nBounds - 1)
       let nLits = nDecisions - lastBound
-      levelBaseLit <- liftIO $ V.readVector vec lastBound
+      levelBaseLit <- liftIO $ V.unsafeReadVector vec lastBound
       let levelBaseVar = L.var levelBaseLit
-      levelBaseState <- liftIO $ UMA.readArray (eVarStates e) levelBaseVar
+      levelBaseState <- liftIO $ PUMA.unsafeReadArray (eVarStates e) levelBaseVar
       liftIO $ D.traceIO ("  [bt] Current decision level is " ++ show dl ++ ", which begins at stack index " ++ show lastBound ++ ", encompassing " ++ show nLits ++ " literals")
       -- If we tried both, backtrack again.  If we can't backtrack
       -- anymore, call the unsat continuation
@@ -315,13 +316,13 @@ undoDecisionLevel kUnsat kDone k = go
             False -> go
             True -> do
               -- Restore the state of the next variable we will try to assign
-              liftIO $ UMA.writeArray (eVarStates e) levelBaseVar levelBaseState
+              liftIO $ PUMA.unsafeWriteArray (eVarStates e) levelBaseVar levelBaseState
               liftIO $ writeIORef (eNextVar e) levelBaseVar
               kDone
     undo s ix nDecisions
       | ix >= nDecisions = return ()
       | otherwise = do
-          lit <- liftIO $ V.readVector s ix
+          lit <- liftIO $ V.unsafeReadVector s ix
           k lit
           undo s (ix + 1) nDecisions
 {-# INLINE undoDecisionLevel #-}
@@ -357,8 +358,8 @@ withNextDecidedLiteral kDone kLit = do
     go e lv nv
       | nv > lv = kDone
       | otherwise = do
-          state <- liftIO $ UMA.readArray (eVarStates e) nv
-          dl <- liftIO $ UMA.readArray (eVarLevels e) nv
+          state <- liftIO $ PUMA.unsafeReadArray (eVarStates e) nv
+          dl <- liftIO $ PUMA.unsafeReadArray (eVarLevels e) nv
           case () of
             _ | dl >= 0 || state == L.triedBoth -> do
                   liftIO $ D.traceIO ("[WNDL] Skipping already assigned var " ++ show nv ++ " because " ++ show (dl, state))
@@ -380,7 +381,7 @@ assertLiteral lit = do
   e <- ask
   let var = L.var lit
       val = L.satisfyLiteral lit
-  curState <- liftIO $ UMA.readArray (eVarStates e) var
+  curState <- liftIO $ PUMA.unsafeReadArray (eVarStates e) var
   assignVariableValue var val (L.nextValueState val curState)
   liftIO $ V.unsafePush (eDecisionStack e) lit
 {-# INLINE assertLiteral #-}
@@ -408,9 +409,9 @@ assignVariableValue var val st = do
   dl <- getDecisionLevel
   liftIO $ do
     D.traceIO ("  [assign] Assigning " ++ show val ++ " to " ++ show var)
-    UMA.writeArray (eAssignment e) var val
-    UMA.writeArray (eVarStates e) var st
-    UMA.writeArray (eVarLevels e) var dl
+    PUMA.unsafeWriteArray (eAssignment e) var val
+    PUMA.unsafeWriteArray (eVarStates e) var st
+    PUMA.unsafeWriteArray (eVarLevels e) var dl
 {-# INLINE assignVariableValue #-}
 
 resetVariable :: L.Variable -> Solver ()
@@ -418,27 +419,27 @@ resetVariable var = do
   e <- ask
   liftIO $ do
     D.traceIO ("[reset] Setting the state of " ++ show var ++ " to triedNothing")
-    UMA.writeArray (eAssignment e) var L.unassigned
-    UMA.writeArray (eVarStates e) var L.triedNothing
-    UMA.writeArray (eVarLevels e) var (-1)
+    PUMA.unsafeWriteArray (eAssignment e) var L.unassigned
+    PUMA.unsafeWriteArray (eVarStates e) var L.triedNothing
+    PUMA.unsafeWriteArray (eVarLevels e) var (-1)
 {-# INLINE resetVariable #-}
 
 lookupVariableAssignment :: L.Variable -> Solver L.Value
 lookupVariableAssignment var = do
   vals <- asks eAssignment
-  liftIO $ UMA.readArray vals var
+  liftIO $ PUMA.unsafeReadArray vals var
 {-# INLINE lookupVariableAssignment #-}
 
 lookupVariableState :: L.Variable -> Solver L.State
 lookupVariableState var = do
   states <- asks eVarStates
-  liftIO $ UMA.readArray states var
+  liftIO $ PUMA.unsafeReadArray states var
 {-# INLINE lookupVariableState #-}
 
-extractAssignment :: Solver (UA.UArray L.Variable L.Value)
+extractAssignment :: Solver (PUA.Array L.Variable L.Value)
 extractAssignment = do
   a <- asks eAssignment
-  liftIO $ MA.freeze a
+  liftIO $ PUMA.freeze a
 
 -- | A context in which a solver runs.  This is basically a ReaderT IO.
 newtype Solver a = S { runS :: Env -> IO a }
@@ -446,23 +447,20 @@ newtype Solver a = S { runS :: Env -> IO a }
 -- | Run a solver with an environment set up for a given CNF formula.
 runSolver :: C.CNF b -> Solver a -> IO a
 runSolver cnf comp = do
-  -- FIXME: It would be best to allocate all possible literals here
-  -- for the variable range.  We could have a case where the last
-  -- negative literal isn't referenced initially, but we might learn a
-  -- clause later that would reference it.
   let vrange@(lowVar, highVar) = variableRange cnf
       lrange = (L.toPositiveLiteral lowVar, L.toNegativeLiteral highVar)
       nLits = rangeSize lrange
+      nVars = rangeSize vrange
   -- There is an assignment for each variable
-  assignment <- MA.newArray vrange L.unassigned
+  assignment <- GA.newArray nVars L.unassigned
   watchlist <- allocateWatchlist cnf lrange
   -- We only need the decision stack to be able to hold all of the literals
   decisionStack <- V.new nLits L.invalidLiteral
   decisionBounds <- V.new nLits (-1)
-  varLevels <- MA.newArray vrange (-1)
+  varLevels <- GA.newArray nVars (-1)
   qref <- newIORef 0
   -- We get an initial worklist composed of all of the unit clauses
-  states <- MA.newArray vrange L.triedNothing
+  states <- GA.newArray nVars L.triedNothing
   highVarRef <- newIORef highVar
   nextVarRef <- newIORef lowVar
   let env = Env { eCNF = cnf
@@ -516,17 +514,18 @@ liftIO a = S $ \_ -> a
 
 allocateWatchlist :: C.CNF a -> (L.Literal, L.Literal) -> IO Watchlist
 allocateWatchlist cnf lrange = do
-  litWatches <- MA.newArray_ lrange
+  litWatches <- GA.newArray_ nLits
   F.forM_ lits $ \l -> do
     v <- V.new nClauses (-1)
-    MA.writeArray litWatches l v
-  clauseWatches <- MA.newArray (0, 2 * nClauses - 1) L.invalidLiteral
+    GA.unsafeWriteArray litWatches l v
+  clauseWatches <- GA.newArray (2 * nClauses) L.invalidLiteral
   return $ Watchlist { wlLitWatches = litWatches
                      , wlClauseWatches = clauseWatches
                      }
   where
     nClauses = C.clauseCount cnf
     lits = range lrange
+    nLits = rangeSize lrange
 
 -- | Initialize the watches.  Each clause starts by watching its first
 -- two literals.  Clauses with only one literal are unit clauses,
@@ -542,20 +541,20 @@ initializeWatches cnf = do
     watchFirst wl ix clause = do
       case C.clauseLiterals clause of
         l1 : l2 : _ -> liftIO $ do
-          MA.writeArray (wlClauseWatches wl) (2 * ix) l1
-          MA.writeArray (wlClauseWatches wl) (2 * ix + 1) l2
+          GA.writeArray (wlClauseWatches wl) (2 * ix) l1
+          GA.writeArray (wlClauseWatches wl) (2 * ix + 1) l2
           let varWatches = wlLitWatches wl
-          l1w <- MA.readArray varWatches l1
+          l1w <- GA.readArray varWatches l1
           V.push l1w ix
-          l2w <- MA.readArray varWatches l2
+          l2w <- GA.readArray varWatches l2
           V.push l2w ix
         l : [] -> do
           assertLiteral l
           liftIO $ do
-            MA.writeArray (wlClauseWatches wl) (2 * ix) l
-            MA.writeArray (wlClauseWatches wl) (2 * ix + 1) l
+            GA.writeArray (wlClauseWatches wl) (2 * ix) l
+            GA.writeArray (wlClauseWatches wl) (2 * ix + 1) l
             let varWatches = wlLitWatches wl
-            lw <- MA.readArray varWatches l
+            lw <- GA.readArray varWatches l
             V.push lw ix
         [] -> return ()
 

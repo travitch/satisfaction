@@ -4,7 +4,7 @@
 -- These vectors support amortized constant push and pop at the end.
 -- Elements can be removed efficiently from the middle by swapping
 -- with the last element and then popping.
-module Data.Array.Vector (
+module Data.Array.Vector.Unboxed (
   Vector,
   new,
   size,
@@ -19,14 +19,13 @@ module Data.Array.Vector (
 import Control.Monad ( when )
 import Control.Monad.Prim
 import Data.Ref.Prim
-import qualified Data.Array.Dynamic as DA
-import qualified Data.Array.Prim.Generic as GA
+import qualified Data.Array.Dynamic.Unboxed as DA
 
 data Vector m e = Vector { vArray :: DA.DArray m Int e
                          , vSize :: Ref m Int
                          }
 
-new :: (PrimMonad m) => Int -> e -> m (Vector m e)
+new :: (PrimMonad m, DA.Unbox e) => Int -> e -> m (Vector m e)
 new cap0 e = do
   sz <- newRef 0
   a <- DA.newArray cap0 e
@@ -38,24 +37,24 @@ size :: (PrimMonad m) => Vector m e -> m Int
 size v = readRef (vSize v)
 {-# INLINE size #-}
 
-push :: (PrimMonad m) => Vector m e -> e -> m ()
+push :: (PrimMonad m, DA.Unbox e) => Vector m e -> e -> m ()
 push v e = do
   sz <- readRef (vSize v)
-  capacity <- GA.size (vArray v)
+  capacity <- DA.size (vArray v)
   when (capacity <= sz) $ do
     DA.grow (vArray v) (2 * sz)
   unsafePush v e
 {-# INLINE push #-}
 
-unsafePush :: (PrimMonad m) => Vector m e -> e -> m ()
+unsafePush :: (PrimMonad m, DA.Unbox e) => Vector m e -> e -> m ()
 unsafePush v e = do
   sz <- readRef (vSize v)
-  GA.unsafeWriteArray (vArray v) sz e
+  DA.unsafeWriteArray (vArray v) sz e
   modifyRef' (vSize v) (+1)
 {-# INLINE unsafePush #-}
 
 -- | Pop up to @n@ elements.  Will not drop the size below zero.
-pop :: (PrimMonad m) => Vector m e -> Int -> m ()
+pop :: (PrimMonad m, DA.Unbox e) => Vector m e -> Int -> m ()
 pop v n = do
   sz <- readRef (vSize v)
   writeRef (vSize v) (max 0 (sz - n))
@@ -65,18 +64,18 @@ pop v n = do
 -- popping.
 --
 -- This function is only valid for non-empty vectors.
-removeElement :: (PrimMonad m) => Vector m e -> Int -> m ()
+removeElement :: (PrimMonad m, DA.Unbox e) => Vector m e -> Int -> m ()
 removeElement v ix = do
   sz <- size v
   lastElt <- readVector v (sz - 1)
-  GA.writeArray (vArray v) ix lastElt
+  DA.writeArray (vArray v) ix lastElt
   pop v 1
 {-# INLINE removeElement #-}
 
-readVector :: (PrimMonad m) => Vector m e -> Int -> m e
-readVector v ix = GA.readArray (vArray v) ix
+readVector :: (PrimMonad m, DA.Unbox e) => Vector m e -> Int -> m e
+readVector v ix = DA.readArray (vArray v) ix
 {-# INLINE readVector #-}
 
-unsafeReadVector :: (PrimMonad m) => Vector m e -> Int -> m e
-unsafeReadVector v ix = GA.unsafeReadArray (vArray v) ix
+unsafeReadVector :: (PrimMonad m, DA.Unbox e) => Vector m e -> Int -> m e
+unsafeReadVector v ix = DA.unsafeReadArray (vArray v) ix
 {-# INLINE unsafeReadVector #-}
