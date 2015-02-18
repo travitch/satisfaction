@@ -1,6 +1,7 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
+-- | This module defines the primitive types used to talk about
+-- variables.  See Note [Representation]
 module SAT.Literal (
   -- * Literals
   Literal,
@@ -158,7 +159,7 @@ unassigned = MkValue { valueAsInt = 2 }
 -- of an equality check because unassigned can actually work out to be
 -- 2 or 3 due to a quirk in litValue or satisfyLiteral.
 isUnassigned :: Value -> Bool
-isUnassigned = (>= unassigned)
+isUnassigned v = v >= unassigned
 {-# INLINE isUnassigned #-}
 
 -- | Compute the 'Value' that satisfies the given 'Literal'
@@ -218,49 +219,18 @@ nextValueState :: Value -> State -> State
 nextValueState val st = MkState $ stateAsInt st .|. (1 + fromIntegral (valueAsInt val))
 {-# INLINE nextValueState #-}
 
-{- Note [Next State]
 
-While we are backtracking, we need to pick the next Value to try to
-assign to a Variable.  The state is tracked in the eVarStates array
-with the values triedNothing (0), triedFalse (1), triedTrue (2), and
-triedBoth (3).  We track states explicitly so that they aren't stored
-in the stack; this is more compact and easier to resume from when we
-freeze state.
+{- Note [Representation]
 
-Based on these states, we have a simple goal: choose the next state.
-Our decisions are easily encoded in a table:
+Variables are (newtypes of) Ints from [0..N].
 
-State | Next Value | Next State | Reason
------------------------------------------
-0 | 0 or 1 | 1 or 2 | Doesn't matter which we choose first
-1 | 1      | 3      | If we tried false, we want to try true
-2 | 0      | 3      | If we tried true, try false next
-3 | -      | -      | We tried both, backtrack again
+The positive literal of variable @n@ is @2n@.  The negative literal of
+variable @n@ is @2n+1@.
 
-We explicitly check for the last case and then backtrack again if
-necessary.  Otherwise, we want a function we can apply to the current
-State to get the next Value to try and the next State.  This gets a
-bit messy since we need to have computations involving the two
-different types, so we end up unwrapping the newtypes here.  This note
-works through the cases so that we can be confident it is correct.
+Assigned values are lifted booleans.  True is represented as (byte)
+zero.  False is one.  Unassigned (bottom) is 2.  This representation
+is odd, but it makes some operations very convenient (see above).
 
-The functions we use are:
-
-nextValue(s) = (s ^ 2) & 1
-nextState(s, v') = s | (1 << v')
-
-State | nextValue(s)
----------------------
-0 | (0 ^ 2) & 1 = 0   (try False first)
-1 | (1 ^ 2) & 1 = 1   (tried False, try True next)
-2 | (2 ^ 2) & 1 = 0   (tried True, try False next)
-3 | N/A, checked separately
-
-State | nextValue(s) | nextState(s, v)
---------------------------------------
-0 | 0 | 0 .|. (1 << 0) = 1   (next state is triedFalse)
-1 | 1 | 1 .|. (1 << 1) = 3   (next state is triedBoth)
-2 | 0 | 2 .|. (1 << 0) = 3   (next state is triedBoth)
-3 | N/A
+States indicate what values have already been assigned to variables.
 
 -}
