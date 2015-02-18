@@ -29,23 +29,23 @@ class PrimMArray a e where
 
 instance PrimArray PA.Array e where
   {-# INLINE elems #-}
-  elems = PA.elems
+  elems a = PA.elems a
   {-# INLINE (!) #-}
   a ! i = a PA.! i
   {-# INLINE unsafeIndex #-}
-  unsafeIndex = PA.unsafeIndex
+  unsafeIndex a i = PA.unsafeIndex a i
   {-# INLINE plength #-}
-  plength = PA.size
+  plength a = PA.size a
 
 instance (PUA.Unbox e) => PrimArray PUA.Array e where
   {-# INLINE elems #-}
-  elems = PUA.elems
+  elems a = PUA.elems a
   {-# INLINE (!) #-}
   a ! i = a PUA.! i
   {-# INLINE unsafeIndex #-}
-  unsafeIndex = PUA.unsafeIndex
+  unsafeIndex a i = PUA.unsafeIndex a i
   {-# INLINE plength #-}
-  plength = PUA.size
+  plength a = PUA.size a
 
 instance PrimMArray PMA.MArray e where
   {-# INLINE size #-}
@@ -53,13 +53,13 @@ instance PrimMArray PMA.MArray e where
   {-# INLINE writeArray #-}
   {-# INLINE unsafeReadArray #-}
   {-# INLINE unsafeWriteArray #-}
-  newArray = PMA.newArray
-  newArray_ = PMA.newArray_
-  size = PMA.size
-  readArray = PMA.readArray
-  unsafeReadArray = PMA.unsafeReadArray
-  writeArray = PMA.writeArray
-  unsafeWriteArray = PMA.unsafeWriteArray
+  newArray n e = PMA.newArray n e
+  newArray_ n = PMA.newArray_ n
+  size a = PMA.size a
+  readArray a ix = PMA.readArray a ix
+  unsafeReadArray a ix = PMA.unsafeReadArray a ix
+  writeArray a ix elt = PMA.writeArray a ix elt
+  unsafeWriteArray a ix elt = PMA.unsafeWriteArray a ix elt
 
 instance (PUMA.Unbox e) => PrimMArray PUMA.MArray e where
   {-# INLINE size #-}
@@ -67,10 +67,10 @@ instance (PUMA.Unbox e) => PrimMArray PUMA.MArray e where
   {-# INLINE writeArray #-}
   {-# INLINE unsafeReadArray #-}
   {-# INLINE unsafeWriteArray #-}
-  newArray = PUMA.newArray
-  newArray_ = PUMA.newArray_
-  size = PUMA.size
-  readArray = PUMA.readArray
-  unsafeReadArray = PUMA.unsafeReadArray
-  writeArray = PUMA.writeArray
-  unsafeWriteArray = PUMA.unsafeWriteArray
+  newArray n e = PUMA.newArray n e
+  newArray_ n = PUMA.newArray_ n
+  size a = PUMA.size a
+  readArray a ix = PUMA.readArray a ix
+  unsafeReadArray a ix = PUMA.unsafeReadArray a ix
+  writeArray a ix elt = PUMA.writeArray a ix elt
+  unsafeWriteArray a ix elt = PUMA.unsafeWriteArray a ix elt

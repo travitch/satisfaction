@@ -17,31 +17,31 @@ import Control.Applicative
 import Control.Monad ( unless, when )
 import Control.Monad.Prim
 import qualified Data.Array.Dynamic as DA
-import qualified Data.Array.Dynamic.Unboxed as UDA
 import qualified Data.Array.Prim.Generic as GA
+import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
 import Data.Bits
 import Data.Ref.Prim
 import Data.Ix.Zero
 
-data Heap m e = Heap { hArray :: DA.DArray m Int e
-                     , hIndices :: UDA.DArray m e Int
-                     , hSize :: Ref m Int
-                     , hLessThan :: e -> e -> m Bool
-                     }
+data Heap a m e = Heap { hArray :: DA.DArray a m Int e
+                       , hIndices :: DA.DArray PUMA.MArray m e Int
+                       , hSize :: Ref m Int
+                       , hLessThan :: e -> e -> m Bool
+                       }
 
 invalidIndex :: Int
 invalidIndex = -1
 
 -- | Allocate a new heap, allocating enough space for all of the
 -- elements in the given range.
-new :: (PrimMonad m, IxZero e)
+new :: (PrimMonad m, GA.PrimMArray a e, IxZero e)
     => Int
     -> (e -> e -> m Bool)
     -> e
-    -> m (Heap m e)
+    -> m (Heap a m e)
 new capacity comparator invalidElement = do
   szRef <- newRef 0
-  indices <- UDA.newArray capacity invalidIndex
+  indices <- DA.newArray capacity invalidIndex
   arr <- DA.newArray capacity invalidElement
   return Heap { hArray = arr
               , hIndices = indices
@@ -50,16 +50,16 @@ new capacity comparator invalidElement = do
               }
 
 -- | Insert an element into the heap, growing if necessary
-insert :: (PrimMonad m, IxZero e) => Heap m e -> e -> m ()
+insert :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
 insert h elt = do
   ensureStorage h elt
   unsafeInsert h elt
 
 -- | Insert an element into the heap.  Throws an error if the element
 -- will not fit in the already allocated storage.
-unsafeInsert :: (PrimMonad m, IxZero e) => Heap m e -> e -> m ()
+unsafeInsert :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
 unsafeInsert h elt = do
-  curIndex <- UDA.readArray (hIndices h) elt
+  curIndex <- DA.readArray (hIndices h) elt
   case curIndex of
     _ | curIndex /= invalidIndex -> return ()
       | otherwise -> do
@@ -89,7 +89,7 @@ rightIndex i = (i `shiftL` 1) + 2
 
 -- | Rebuild the heap invariant by moving the element at the given
 -- index into its proper place.
-percolateUp :: (PrimMonad m, IxZero e) => Heap m e -> e -> Int -> m ()
+percolateUp :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> Int -> m ()
 percolateUp h elt = go
   where
     go arrIx
@@ -117,7 +117,7 @@ percolateUp h elt = go
 
 -- | Take the maximum element from the heap (if any) and fix up the
 -- heap invariant.
-takeMin :: (PrimMonad m, IxZero e) => Heap m e -> m (Maybe e)
+takeMin :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> m (Maybe e)
 takeMin h = do
   sz <- size h
   case sz of
@@ -134,9 +134,9 @@ takeMin h = do
         percolateDown h lastElt sz' 0
       return (Just minElt)
 
-withSmaller :: (PrimMonad m)
+withSmaller :: (PrimMonad m, GA.PrimMArray a e)
             => (e -> e -> m Bool)
-            -> DA.DArray m Int e
+            -> DA.DArray a m Int e
             -> Int
             -> Int
             -> e
@@ -153,7 +153,7 @@ withSmaller (.<.) arr sz ix1 elt1 ix2 k
         False -> k ix2 elt2
 {-# INLINE withSmaller #-}
 
-percolateDown :: (PrimMonad m, IxZero e) => Heap m e -> e -> Int -> Int -> m ()
+percolateDown :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> Int -> Int -> m ()
 percolateDown h elt sz = go
   where
     go arrIx = do
@@ -175,11 +175,11 @@ percolateDown h elt sz = go
             GA.writeArray (hIndices h) elt smallestIx
             go smallestIx
 
-size :: (PrimMonad m) => Heap m e -> m Int
+size :: (PrimMonad m, GA.PrimMArray a e) => Heap a m e -> m Int
 size = readRef . hSize
 {-# INLINE size #-}
 
-null :: (PrimMonad m) => Heap m e -> m Bool
+null :: (PrimMonad m, GA.PrimMArray a e) => Heap a m e -> m Bool
 null h = (==0) <$> size h
 {-# INLINE null #-}
 
@@ -193,11 +193,11 @@ null h = (==0) <$> size h
 -- index array.  Since we start with that invariant satisfied at
 -- construction time, we only need to enlarge either array if the new
 -- element is outside of the range of the current index array.
-ensureStorage :: (PrimMonad m, IxZero e) => Heap m e -> e -> m ()
+ensureStorage :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
 ensureStorage h elt = do
-  curSize <- UDA.size (hIndices h)
+  curSize <- DA.size (hIndices h)
   unless (zix < curSize) $ do
-    UDA.grow (hIndices h) newBounds
+    DA.grow (hIndices h) newBounds
     DA.grow (hArray h) newBounds
   where
     zix = toZeroIndex elt

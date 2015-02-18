@@ -22,7 +22,6 @@ library
                    SAT.CNF
                    SAT.Literal
                    Data.Array.Dynamic
-                   Data.Array.Dynamic.Unboxed
                    Data.Array.Heap
                    Data.Array.Prim
                    Data.Array.Prim.Generic
@@ -31,7 +30,6 @@ library
                    Data.Array.Prim.Unboxed.Mutable
                    Data.Array.Traverse
                    Data.Array.Vector
-                   Data.Array.Vector.Unboxed
                    Data.Ref.Prim
                    Data.Ix.Zero
                    Data.Unbox

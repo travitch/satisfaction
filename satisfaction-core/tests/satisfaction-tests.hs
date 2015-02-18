@@ -24,9 +24,9 @@ main = do
   satTests <- FP.find FP.always (FP.extension FP.==? ".cnf") "tests/cnf/sat"
   unsatTests <- FP.find FP.always (FP.extension FP.==? ".cnf") "tests/cnf/unsat"
   T.defaultMain $ T.testGroup "Satisfaction Tests" [
---    heapTests1 "UnboxedHeapTests1" allocateUnboxedHeap,
+    heapTests1 "UnboxedHeapTests1" allocateUnboxedHeap,
     heapTests1 "BoxedHeapTests1" allocateBoxedHeap,
---    heapTests2 "UnboxedHeapTests2" allocateUnboxedHeap,
+    heapTests2 "UnboxedHeapTests2" allocateUnboxedHeap,
     heapTests2 "BoxedHeapTests2" allocateBoxedHeap,
     dimacsTests "SatTests" satTests expectSatisfiable,
     dimacsTests "UnsatTests" unsatTests expectUnsatisfiable
@@ -82,15 +82,15 @@ expectUnsatisfiable _ sol = T.assertEqual "Unexpected solution" Nothing sol
 intComparator :: Int -> Int -> IO Bool
 intComparator a b = return (a < b)
 
--- allocateUnboxedHeap :: Int -> IO (H.Heap PUMA.MArray IO Int)
--- allocateUnboxedHeap range = H.new range intComparator (-1)
+allocateUnboxedHeap :: Int -> IO (H.Heap PUMA.MArray IO Int)
+allocateUnboxedHeap range = H.new range intComparator (-1)
 
-allocateBoxedHeap :: Int -> IO (H.Heap IO Int)
+allocateBoxedHeap :: Int -> IO (H.Heap PMA.MArray IO Int)
 allocateBoxedHeap range = H.new range intComparator (-1)
 
 -- Tests that adding a bunch of elements to the heap and removing the
 -- minimum actually returns the true minimum element.
-heapTests1 :: String -> (Int -> IO (H.Heap IO Int)) -> T.TestTree
+heapTests1 :: (GA.PrimMArray a Int) => String -> (Int -> IO (H.Heap a IO Int)) -> T.TestTree
 heapTests1 name allocator = QC.testProperty name $ MQC.monadicIO $ do
   let testRange = (0, 10000)
   nElts <- MQC.pick (QC.choose (0, 20))
@@ -107,7 +107,7 @@ heapTests1 name allocator = QC.testProperty name $ MQC.monadicIO $ do
     Nothing -> MQC.assert (null lst)
     Just elt -> MQC.assert (elt == minElt)
 
-heapTests2 :: String -> (Int -> IO (H.Heap IO Int)) -> T.TestTree
+heapTests2 :: (GA.PrimMArray a Int) => String -> (Int -> IO (H.Heap a IO Int)) -> T.TestTree
 heapTests2 name allocator = QC.testProperty name $ MQC.monadicIO $ do
   let testRange = (0, 10000)
   nElts <- MQC.pick (QC.choose (0, 20))

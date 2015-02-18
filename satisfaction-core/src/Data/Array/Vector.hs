@@ -22,11 +22,11 @@ import Data.Ref.Prim
 import qualified Data.Array.Dynamic as DA
 import qualified Data.Array.Prim.Generic as GA
 
-data Vector m e = Vector { vArray :: DA.DArray m Int e
-                         , vSize :: Ref m Int
-                         }
+data Vector a m e = Vector { vArray :: DA.DArray a m Int e
+                           , vSize :: Ref m Int
+                           }
 
-new :: (PrimMonad m) => Int -> e -> m (Vector m e)
+new :: (PrimMonad m, GA.PrimMArray a e) => Int -> e -> m (Vector a m e)
 new cap0 e = do
   sz <- newRef 0
   a <- DA.newArray cap0 e
@@ -34,11 +34,11 @@ new cap0 e = do
                 , vSize = sz
                 }
 
-size :: (PrimMonad m) => Vector m e -> m Int
+size :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> m Int
 size v = readRef (vSize v)
 {-# INLINE size #-}
 
-push :: (PrimMonad m) => Vector m e -> e -> m ()
+push :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> e -> m ()
 push v e = do
   sz <- readRef (vSize v)
   capacity <- GA.size (vArray v)
@@ -47,7 +47,7 @@ push v e = do
   unsafePush v e
 {-# INLINE push #-}
 
-unsafePush :: (PrimMonad m) => Vector m e -> e -> m ()
+unsafePush :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> e -> m ()
 unsafePush v e = do
   sz <- readRef (vSize v)
   GA.unsafeWriteArray (vArray v) sz e
@@ -55,7 +55,7 @@ unsafePush v e = do
 {-# INLINE unsafePush #-}
 
 -- | Pop up to @n@ elements.  Will not drop the size below zero.
-pop :: (PrimMonad m) => Vector m e -> Int -> m ()
+pop :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> Int -> m ()
 pop v n = do
   sz <- readRef (vSize v)
   writeRef (vSize v) (max 0 (sz - n))
@@ -65,7 +65,7 @@ pop v n = do
 -- popping.
 --
 -- This function is only valid for non-empty vectors.
-removeElement :: (PrimMonad m) => Vector m e -> Int -> m ()
+removeElement :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> Int -> m ()
 removeElement v ix = do
   sz <- size v
   lastElt <- readVector v (sz - 1)
@@ -73,10 +73,10 @@ removeElement v ix = do
   pop v 1
 {-# INLINE removeElement #-}
 
-readVector :: (PrimMonad m) => Vector m e -> Int -> m e
+readVector :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> Int -> m e
 readVector v ix = GA.readArray (vArray v) ix
 {-# INLINE readVector #-}
 
-unsafeReadVector :: (PrimMonad m) => Vector m e -> Int -> m e
+unsafeReadVector :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> Int -> m e
 unsafeReadVector v ix = GA.unsafeReadArray (vArray v) ix
 {-# INLINE unsafeReadVector #-}
