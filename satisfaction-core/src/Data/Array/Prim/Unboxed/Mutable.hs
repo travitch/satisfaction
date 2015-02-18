@@ -90,7 +90,7 @@ unsafeReadArray :: (PrimMonad m, Unbox a, IxZero i)
                 -> i
                 -> m a
 unsafeReadArray marr ix =
-  primitive (unboxRead (marrayStorage marr) i)
+  primitive (\s# -> unboxRead (marrayStorage marr) i s#)
   where
     !(I# i) = toZeroIndex ix
 {-# INLINE unsafeReadArray #-}
@@ -101,7 +101,7 @@ unsafeWriteArray :: (PrimMonad m, Unbox a, IxZero i)
                  -> a
                  -> m ()
 unsafeWriteArray marr ix elt =
-  primitive_ (unboxWrite (marrayStorage marr) i elt)
+  primitive_ (\s# -> unboxWrite (marrayStorage marr) i elt s#)
   where
     !(I# i) = toZeroIndex ix
 {-# INLINE unsafeWriteArray #-}

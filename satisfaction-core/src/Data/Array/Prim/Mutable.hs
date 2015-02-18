@@ -40,7 +40,7 @@ readArray marr ix
 
 unsafeReadArray :: (PrimMonad m, IxZero i) => MArray m i a -> i -> m a
 unsafeReadArray marr ix =
-  primitive (readArray# (unMArray marr) i)
+  primitive (\s# -> readArray# (unMArray marr) i s#)
   where
     !(I# i) = toZeroIndex ix
 {-# INLINE unsafeReadArray #-}
@@ -53,7 +53,7 @@ writeArray marr ix elt
 
 unsafeWriteArray :: (PrimMonad m, IxZero i) => MArray m i a -> i -> a -> m ()
 unsafeWriteArray marr ix elt =
-  primitive_ (writeArray# (unMArray marr) i elt)
+  primitive_ (\s# -> writeArray# (unMArray marr) i elt s#)
   where
     !(I# i) = toZeroIndex ix
 {-# INLINE unsafeWriteArray #-}
