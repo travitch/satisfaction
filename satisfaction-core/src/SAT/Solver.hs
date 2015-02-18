@@ -111,8 +111,6 @@ backtrack kBacktracked _conflict = go
               undoDecisionLevel (return IUnsat) kBacktracked $ \lit -> do
                 liftIO $ D.traceIO ("  [bt] Undoing assignment to " ++ show (L.var lit))
                 resetVariable (L.var lit)
---                assignVariableValue (L.var lit) L.unassigned L.triedNothing
---              kBacktracked
 {-# INLINE backtrack #-}
 
 {- Note [Unit Propagation]

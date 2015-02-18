@@ -69,17 +69,12 @@ data Watchlist =
               -- literal being watched for clause @i@.
             }
 
--- The solver Monad, which is just an opaque IO Monad with a Reader
--- environment
-
 -- | The Reader environment.  We quantify away the type parameter to
--- the formula because we never need to look at its reverse mapping.
+-- the formula because we never need to look at its reverse mapping
+-- back to user-provided variables.
 --
--- The last variable is an IORef because SMT will require introducing
--- new variables.
---
--- The decision level is the next variable we need to choose a value
--- for.
+-- The last variable is an IORef because we may want to add new variables
+-- internally later (e.g., for SMT solving).
 data Env = forall a . Env { eWatchlist :: Watchlist
                           , eAssignment :: PUMA.MArray IO L.Variable L.Value
                           , eVarStates :: PUMA.MArray IO L.Variable L.State
@@ -121,9 +116,17 @@ data Conflict = Conflict
 --
 -- In the first case, we make the assignment (which implicitly adds
 -- that newly decided literal to the queue).  Otherwise, we invoke the
--- conflict continuation, which will backtrack and drain the queue.
+-- conflict continuation, which will backtrack and drain the queue
+-- (since those assignments are being undone, we do not need to
+-- propagate their units).
 --
--- Question: What do we do with the remaining watches?
+-- During this process, we remove elements from the inverse watchlist
+-- (the list of clauses watching each literal) as we find new watched
+-- variables.  In the case we cannot find a new watch (because the
+-- clause is unit), we leave the entry in the inverse watchlist.  This
+-- way, the watchlist is consistent after we backtrack.  In the case
+-- we don't backtrack the decision, it doesn't matter because the
+-- clause is satisfied.
 updateWatchlists :: L.Literal -- ^ Literal causing the update
                  -> (Conflict -> Solver a) -- ^ Continuation on a conflicting assignment
                  -> Solver a -- ^ Continuation on successful watchlist update
@@ -200,16 +203,21 @@ updateWatchlists l kConflict kNext = do
                   go clauses watchers ix
 {-# INLINE updateWatchlists #-}
 
+-- | Determine the value of the given 'L.Literal
 literalValue :: L.Literal -> Solver L.Value
 literalValue l = do
   assignments <- asks eAssignment
   val <- liftIO $ GA.unsafeReadArray assignments (L.var l)
-  return $ L.litValue l val
+  return $! L.litValue l val
 {-# INLINE literalValue #-}
 
 -- | Analyze the currently watched literals for a clause and figure
 -- out which index holds the one we know to be false and which holds
 -- the other.
+--
+-- Calls the continuation with the other literal and the index in the
+-- watchlist of the false literal.  The position will be overwritten
+-- with a new watched literal by the continuation, if possible.
 normalizeWatchedLiterals :: Int -> L.Literal -> (L.Literal -> Int -> Solver a) -> Solver a
 normalizeWatchedLiterals clauseNum falseLit k = do
   wl <- asks eWatchlist
@@ -232,7 +240,6 @@ withTrueOrUnassignedLiteral :: Solver a -- ^ Continuation for the case we can't 
 withTrueOrUnassignedLiteral kConflict clause ignoreLit withLit = go 0
   where
     sz = C.clauseSize clause
---    (low, high) = C.clauseRange clause
     go ix | ix >= sz = kConflict
           | otherwise = do
               let l = clause `C.clauseLiteral` ix
@@ -270,13 +277,16 @@ withQueuedDecision kEmpty kProp = do
       kProp lit
 {-# INLINE withQueuedDecision #-}
 
--- | Undo all of the assignments at the current decision level.
+-- | Undo all of the assignments until we reach a decision level for which
+-- we can flip the assignment of the decided variable (from true to
+-- false or false to true).
 --
--- After the callback has been invoked for each literal, the literals
--- are popped from the decision stack and the decision level is
--- decremented.
-undoDecisionLevel :: Solver a
-                  -> Solver a
+-- This can undo more than one decision level.
+--
+-- If we undo the lowest decision level, we have found a contradiction
+-- and call @kUnsat@.
+undoDecisionLevel :: Solver a -- ^ Unsatisfiable continuation
+                  -> Solver a -- ^ Normal continuation
                   -> (L.Literal -> Solver ()) -- ^ Callback for each literal
                   -> Solver a
 undoDecisionLevel kUnsat kDone k = go
@@ -322,8 +332,6 @@ undoDecisionLevel kUnsat kDone k = go
           undo s (ix + 1) nDecisions
 {-# INLINE undoDecisionLevel #-}
 
-
-
 getLastVariable :: Solver L.Variable
 getLastVariable = do
   ref <- asks eLastVar
@@ -334,10 +342,8 @@ getFirstVariable :: Solver L.Variable
 getFirstVariable = asks eFirstVar
 {-# INLINE getFirstVariable #-}
 
-
 -- | Find the next 'Variable' to assign a value to, implicitly
--- encoding that as a 'Literal'.  Return the next 'State' for the
--- corresponding 'Variable'.
+-- encoding that as a 'Literal'.
 --
 -- If there are no more variables to assign, extract a solution with
 -- the given continuation.
@@ -364,13 +370,6 @@ withNextDecidedLiteral kDone kLit = do
                   kLit (L.nextLiteral nv state)
 {-# INLINE withNextDecidedLiteral #-}
 
--- This is overwriting earlier assignments (because the assignments
--- were made during propagation).  eNext isn't so useful in this case
--- - we need to know not to override earlier assignments.
---
--- Perhaps track the decision level of each variable?  If the DL is
--- set, skip the variable.
-
 assertLiteral :: L.Literal -> Solver ()
 assertLiteral lit = do
   e <- ask
@@ -387,6 +386,12 @@ getDecisionLevel = do
   liftIO (V.size bv)
 {-# INLINE getDecisionLevel #-}
 
+-- | Increment the current decision level
+--
+-- The decision level is implicit, and represented as the length of
+-- the 'eDecisionBoundaries' list.  This function saves the current
+-- size of the decision stack as the new boundary, which increments
+-- the decision level.
 incrementDecisionLevel :: Solver ()
 incrementDecisionLevel = do
   e <- ask
@@ -396,7 +401,7 @@ incrementDecisionLevel = do
   liftIO $ D.traceIO ("[idl] At decision level " ++ show level ++ ", which starts at index " ++ show dl)
 {-# INLINE incrementDecisionLevel #-}
 
--- | Assign a 'Value' to a 'L.Variable'.
+-- | Assign a 'L.Value' to a 'L.Variable'.
 --
 -- Note that the 'State' is always required to be updated at the same
 -- time.
