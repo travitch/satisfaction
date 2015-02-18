@@ -387,7 +387,9 @@ assertLiteral lit = do
 {-# INLINE assertLiteral #-}
 
 getDecisionLevel :: Solver Int
-getDecisionLevel = asks eDecisionBoundaries >>= (liftIO . V.size)
+getDecisionLevel = do
+  bv <- asks eDecisionBoundaries
+  liftIO (V.size bv)
 {-# INLINE getDecisionLevel #-}
 
 incrementDecisionLevel :: Solver ()
