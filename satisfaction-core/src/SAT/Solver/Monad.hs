@@ -85,7 +85,7 @@ data Env = forall a . Env { eWatchlist :: Watchlist
                             -- levels in the decision stack.
                           , eVarLevels :: PUMA.MArray IO L.Variable Int
                             -- ^ The decision level for each variable.
-                          , ePropagationQueue :: {-# UNPACK #-} !(IORef Int)
+                          , ePropagationQueue :: IORef Int
                             -- ^ Literals that have been assigned
                             -- False that we need to propagate units
                             -- for.  This is an index into the
