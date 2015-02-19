@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
 -- | These are internal types for the solver
 --
 -- These types are internal and specific to the CDCL solver.  More
