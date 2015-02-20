@@ -25,25 +25,25 @@ class Unbox a where
 
 instance Unbox Int where
   {-# INLINE unboxBytes #-}
-  unboxBytes _ = wordBytes
+  unboxBytes = \_ -> wordBytes
   {-# INLINE unboxIndex #-}
-  unboxIndex ba ix = I# (indexIntArray# ba ix)
+  unboxIndex = \ba ix -> I# (indexIntArray# ba ix)
   {-# INLINE unboxWrite #-}
-  unboxWrite mba ix (I# elt) s# = writeIntArray# mba ix elt s#
+  unboxWrite = \mba ix (I# elt) s# -> writeIntArray# mba ix elt s#
   {-# INLINE unboxRead #-}
-  unboxRead mba ix s# =
+  unboxRead = \mba ix s# ->
     case readIntArray# mba ix s# of
       (# s'#, i# #) -> (# s'#, I# i# #)
 
 instance Unbox Int8 where
   {-# INLINE unboxBytes #-}
-  unboxBytes _ = 1
+  unboxBytes = \_ -> 1
   {-# INLINE unboxIndex #-}
-  unboxIndex ba ix = I8# (indexInt8Array# ba ix)
+  unboxIndex = \ba ix -> I8# (indexInt8Array# ba ix)
   {-# INLINE unboxWrite #-}
-  unboxWrite mba ix (I8# elt) s# = writeInt8Array# mba ix elt s#
+  unboxWrite = \mba ix (I8# elt) s# -> writeInt8Array# mba ix elt s#
   {-# INLINE unboxRead #-}
-  unboxRead mba ix s# =
+  unboxRead = \mba ix s# ->
     case readInt8Array# mba ix s# of
       (# s'#, i# #) -> (# s'#, I8# i# #)
 

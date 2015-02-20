@@ -1,4 +1,4 @@
-{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UnboxedTuples #-}
 -- | This module defines the primitive types used to talk about
 -- variables.  See Note [Representation]
@@ -35,7 +35,6 @@ module SAT.Literal (
   nextValueState
   ) where
 
-import GHC.Exts
 import GHC.Int
 
 import Data.Bits
@@ -44,7 +43,7 @@ import Data.Ix.Zero
 import Data.Unbox
 
 newtype Variable = MkVariable { varAsInt :: Int }
-                 deriving (Eq, Ord, Show, Ix)
+                 deriving (Eq, Ord, Show, Ix, Unbox)
 
 instance IxZero Variable where
   {-# INLINE toZeroIndex #-}
@@ -52,32 +51,8 @@ instance IxZero Variable where
   toZeroIndex = varAsInt
   fromZeroIndex = MkVariable
 
-instance Unbox Variable where
-  {-# INLINE unboxBytes #-}
-  unboxBytes _ = unboxBytes (Proxy :: Proxy Int)
-  {-# INLINE unboxIndex #-}
-  unboxIndex ba ix = MkVariable (I# (indexIntArray# ba ix))
-  {-# INLINE unboxWrite #-}
-  unboxWrite mba ix (MkVariable (I# elt)) s# = writeIntArray# mba ix elt s#
-  {-# INLINE unboxRead #-}
-  unboxRead mba ix s# =
-    case readIntArray# mba ix s# of
-      (# s'#, i# #) -> (# s'#, MkVariable (I# i#) #)
-
 newtype Literal = MkLiteral { litAsInt :: Int }
-                deriving (Eq, Ord, Show, Ix)
-
-instance Unbox Literal where
-  {-# INLINE unboxBytes #-}
-  unboxBytes _ = unboxBytes (Proxy :: Proxy Int)
-  {-# INLINE unboxIndex #-}
-  unboxIndex ba ix = MkLiteral (I# (indexIntArray# ba ix))
-  {-# INLINE unboxWrite #-}
-  unboxWrite mba ix (MkLiteral (I# elt)) s# = writeIntArray# mba ix elt s#
-  {-# INLINE unboxRead #-}
-  unboxRead mba ix s# =
-    case readIntArray# mba ix s# of
-      (# s'#, i# #) -> (# s'#, MkLiteral (I# i#) #)
+                deriving (Eq, Ord, Show, Ix, Unbox)
 
 instance IxZero Literal where
   {-# INLINE toZeroIndex #-}
@@ -132,19 +107,7 @@ invalidLiteral = MkLiteral (-1)
 -- probably be an overall loss.  Besides, the space for the assignment
 -- isn't really a bottleneck.
 newtype Value = MkValue { valueAsInt :: Int8 }
-              deriving (Eq, Ord, Show)
-
-instance Unbox Value where
-  {-# INLINE unboxBytes #-}
-  unboxBytes _ = 1
-  {-# INLINE unboxIndex #-}
-  unboxIndex ba ix = MkValue (I8# (indexInt8Array# ba ix))
-  {-# INLINE unboxWrite #-}
-  unboxWrite mba ix (MkValue (I8# elt)) s# = writeInt8Array# mba ix elt s#
-  {-# INLINE unboxRead #-}
-  unboxRead mba ix s# =
-    case readInt8Array# mba ix s# of
-      (# s'#, i# #) -> (# s'#, MkValue (I8# i#) #)
+              deriving (Eq, Ord, Show, Unbox)
 
 liftedTrue :: Value
 liftedTrue = MkValue { valueAsInt = 0 }
@@ -181,19 +144,7 @@ litValue l v = MkValue { valueAsInt = valueAsInt v `xor` fromIntegral (litAsInt 
 -- maintaining state manually in a tail recursive iteration.  Even in
 -- Haskell, this will be useful for very large problems.
 newtype State = MkState { stateAsInt :: Int8 }
-              deriving (Eq, Ord, Show)
-
-instance Unbox State where
-  {-# INLINE unboxBytes #-}
-  unboxBytes _ = 1
-  {-# INLINE unboxIndex #-}
-  unboxIndex ba ix = MkState (I8# (indexInt8Array# ba ix))
-  {-# INLINE unboxWrite #-}
-  unboxWrite mba ix (MkState (I8# elt)) s# = writeInt8Array# mba ix elt s#
-  {-# INLINE unboxRead #-}
-  unboxRead mba ix s# =
-    case readInt8Array# mba ix s# of
-      (# s'#, i# #) -> (# s'#, MkState (I8# i#) #)
+              deriving (Eq, Ord, Show, Unbox)
 
 triedNothing :: State
 triedNothing = MkState { stateAsInt = 0 }
