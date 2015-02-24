@@ -56,8 +56,10 @@ readArray :: (PrimMonad m, Unbox a, IxZero i)
           -> i
           -> m a
 readArray marr ix
-  | marraySize marr <= toZeroIndex ix = error "Data.Array.Prim.Unboxed.Mutable.readArray: Index out of bounds"
+  | ix' < 0 || marraySize marr <= ix' = error "Data.Array.Prim.Unboxed.Mutable.readArray: Index out of bounds"
   | otherwise = unsafeReadArray marr ix
+  where
+    ix' = toZeroIndex ix
 {-# INLINE readArray #-}
 
 writeArray :: (PrimMonad m, Unbox a, IxZero i)
@@ -66,8 +68,10 @@ writeArray :: (PrimMonad m, Unbox a, IxZero i)
            -> a
            -> m ()
 writeArray marr ix elt
-  | marraySize marr <= toZeroIndex ix = error "Data.Array.Prim.Unboxed.Mutable.writeArray: Index out of bounds"
+  | ix' < 0 || marraySize marr <= ix' = error "Data.Array.Prim.Unboxed.Mutable.writeArray: Index out of bounds"
   | otherwise = unsafeWriteArray marr ix elt
+  where
+    ix' = toZeroIndex ix
 {-# INLINE writeArray #-}
 
 freeze :: forall a i m . (PrimMonad m, Unbox a)

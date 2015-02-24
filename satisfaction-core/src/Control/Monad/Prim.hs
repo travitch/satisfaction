@@ -13,11 +13,17 @@ module Control.Monad.Prim (
 import GHC.IO ( IO(..) )
 import GHC.Exts
 import GHC.ST ( ST(..) )
+
 import Control.Applicative
 import Data.Ref.Prim
 
+import Prelude
+
+-- | Embed a state-token manipulating function into a 'PrimMonad'
 class (Applicative m, Monad m, PrimRef m) => PrimMonad m where
+  -- | The type of the primitive state
   type PrimState m
+  -- | Embed an action
   primitive :: (State# (PrimState m) -> (# State# (PrimState m), a #)) -> m a
 
 instance PrimMonad IO where
@@ -30,7 +36,7 @@ instance PrimMonad (ST s) where
   {-# INLINE primitive #-}
   primitive = ST
 
-
+-- | Embed an action with no return value
 primitive_ :: (PrimMonad m)
            => (State# (PrimState m) -> State# (PrimState m))
            -> m ()

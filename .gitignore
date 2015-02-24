@@ -9,3 +9,7 @@
 /satisfaction-conduit/dist/
 /satisfaction/cabal.config
 /satisfaction/profiles/
+/.cabal-sandbox/
+/cabal.sandbox.config
+
+/satisfaction/satisfaction.prof

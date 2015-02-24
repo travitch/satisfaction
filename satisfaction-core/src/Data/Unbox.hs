@@ -47,5 +47,29 @@ instance Unbox Int8 where
     case readInt8Array# mba ix s# of
       (# s'#, i# #) -> (# s'#, I8# i# #)
 
+instance Unbox Double where
+  {-# INLINE unboxBytes #-}
+  {-# INLINE unboxIndex #-}
+  {-# INLINE unboxWrite #-}
+  {-# INLINE unboxRead #-}
+  unboxBytes = \_ -> 8
+  unboxIndex = \ba ix -> D# (indexDoubleArray# ba ix)
+  unboxWrite = \mba ix (D# elt) s# -> writeDoubleArray# mba ix elt s#
+  unboxRead = \mba ix s# ->
+    case readDoubleArray# mba ix s# of
+      (# s'#, d# #) -> (# s'#, D# d# #)
+
+instance Unbox Float where
+  {-# INLINE unboxBytes #-}
+  {-# INLINE unboxIndex #-}
+  {-# INLINE unboxWrite #-}
+  {-# INLINE unboxRead #-}
+  unboxBytes = \_ -> 4
+  unboxIndex = \ba ix -> F# (indexFloatArray# ba ix)
+  unboxWrite = \mba ix (F# elt) s# -> writeFloatArray# mba ix elt s#
+  unboxRead = \mba ix s# ->
+    case readFloatArray# mba ix s# of
+      (# s'#, f# #) -> (# s'#, F# f# #)
+
 wordBytes :: Int
 wordBytes = SIZEOF_HSWORD

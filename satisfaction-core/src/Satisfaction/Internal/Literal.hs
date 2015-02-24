@@ -2,7 +2,7 @@
 {-# LANGUAGE UnboxedTuples #-}
 -- | This module defines the primitive types used to talk about
 -- variables.  See Note [Representation]
-module SAT.Literal (
+module Satisfaction.Internal.Literal (
   -- * Literals
   Literal,
   neg,
@@ -13,26 +13,17 @@ module SAT.Literal (
   invalidLiteral,
   satisfyLiteral,
   litValue,
-  nextLiteral,
   -- * Variables
   Variable,
   firstVariable,
   nextVariable,
   previousVariable,
-  -- * History tracking for variables
-  State,
-  triedNothing,
-  triedFalse,
-  triedTrue,
-  triedBoth,
   -- * Assigned values
   Value,
   liftedTrue,
   liftedFalse,
   unassigned,
-  isUnassigned,
-  nextValue,
-  nextValueState
+  isUnassigned
   ) where
 
 import GHC.Int
@@ -138,39 +129,6 @@ litValue :: Literal -> Value -> Value
 litValue l v = MkValue { valueAsInt = valueAsInt v `xor` fromIntegral (litAsInt l .&. 1) }
 {-# INLINE litValue #-}
 
--- | States explicitly track the assignment state of a 'Variable'.
---
--- We want this so that we can avoid large call stacks, instead
--- maintaining state manually in a tail recursive iteration.  Even in
--- Haskell, this will be useful for very large problems.
-newtype State = MkState { stateAsInt :: Int8 }
-              deriving (Eq, Ord, Show, Unbox)
-
-triedNothing :: State
-triedNothing = MkState { stateAsInt = 0 }
-
-triedTrue :: State
-triedTrue = MkState { stateAsInt = 1 }
-
-triedFalse :: State
-triedFalse = MkState { stateAsInt = 2 }
-
-triedBoth :: State
-triedBoth = MkState { stateAsInt = 3 }
-
-nextValue :: State -> Value
-nextValue s = MkValue (stateAsInt s .&. 1)
-{-# INLINE nextValue #-}
-
-nextLiteral :: Variable -> State -> Literal
-nextLiteral v s = MkLiteral ((varAsInt v `shiftL` 1) .|. fromIntegral (stateAsInt s .&. 1))
-{-# INLINE nextLiteral #-}
-
-nextValueState :: Value -> State -> State
-nextValueState val st = MkState $ stateAsInt st .|. (1 + fromIntegral (valueAsInt val))
-{-# INLINE nextValueState #-}
-
-
 {- Note [Representation]
 
 Variables are (newtypes of) Ints from [0..N].
@@ -181,7 +139,5 @@ variable @n@ is @2n+1@.
 Assigned values are lifted booleans.  True is represented as (byte)
 zero.  False is one.  Unassigned (bottom) is 2.  This representation
 is odd, but it makes some operations very convenient (see above).
-
-States indicate what values have already been assigned to variables.
 
 -}

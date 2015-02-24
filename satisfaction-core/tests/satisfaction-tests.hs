@@ -17,7 +17,8 @@ import qualified Test.QuickCheck.Monadic as MQC
 import qualified Test.Tasty.HUnit as T
 
 import qualified Data.Array.Heap as H
-import qualified SAT.Solver as S
+
+import qualified Satisfaction as S
 
 main :: IO ()
 main = do
@@ -34,7 +35,7 @@ main = do
 
 -- The dimacs tests
 
-dimacsTests :: String -> [FilePath] -> (P.CNF -> Maybe (S.Solution Int) -> T.Assertion) -> T.TestTree
+dimacsTests :: String -> [FilePath] -> (P.CNF -> S.Solution Int -> T.Assertion) -> T.TestTree
 dimacsTests name inputs checkTest = T.testGroup name $ map mkTest inputs
   where
     mkTest input = T.testCase input $ do
@@ -60,9 +61,9 @@ convertCNF cnf0 =
                  | otherwise = S.L e
 
 
-expectSatisfiable :: P.CNF -> Maybe (S.Solution Int) -> T.Assertion
-expectSatisfiable _  Nothing = T.assertFailure "Expected satisfying assignment"
-expectSatisfiable cnf (Just sol) = mapM_ assertAtLeastOneTrue (P.clauses cnf)
+expectSatisfiable :: P.CNF -> S.Solution Int -> T.Assertion
+expectSatisfiable _  S.Unsatisfiable {} = T.assertFailure "Expected satisfying assignment"
+expectSatisfiable cnf S.Satisfiable { S.solutionModel = sol } = mapM_ assertAtLeastOneTrue (P.clauses cnf)
   where
     assignment = S.satisfyingAssignment sol
     assertAtLeastOneTrue clause = do
@@ -74,8 +75,11 @@ expectSatisfiable cnf (Just sol) = mapM_ assertAtLeastOneTrue (P.clauses cnf)
       clauseValue <- mapM litVal (IA.elems clause)
       T.assertBool ("Expected clause to be true: " ++ show clause) (or clauseValue)
 
-expectUnsatisfiable :: P.CNF -> Maybe (S.Solution Int) -> T.Assertion
-expectUnsatisfiable _ sol = T.assertEqual "Unexpected solution" Nothing sol
+expectUnsatisfiable :: P.CNF -> S.Solution Int -> T.Assertion
+expectUnsatisfiable _ sol =
+  case sol of
+    S.Unsatisfiable {} -> return ()
+    _ -> T.assertFailure "Unexpected solution"
 
 -- Setup for the binary heap tests
 

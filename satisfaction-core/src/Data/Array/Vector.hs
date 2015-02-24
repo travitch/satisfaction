@@ -11,8 +11,11 @@ module Data.Array.Vector (
   push,
   unsafePush,
   pop,
+  clear,
   readVector,
   unsafeReadVector,
+  writeVector,
+  unsafeWriteVector,
   removeElement
   ) where
 
@@ -61,6 +64,10 @@ pop v n = do
   writeRef (vSize v) (max 0 (sz - n))
 {-# INLINE pop #-}
 
+clear :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> m ()
+clear v = writeRef (vSize v) 0
+{-# INLINE clear #-}
+
 -- | Remove an element by swapping it with the last element and then
 -- popping.
 --
@@ -80,3 +87,11 @@ readVector v ix = GA.readArray (vArray v) ix
 unsafeReadVector :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> Int -> m e
 unsafeReadVector v ix = GA.unsafeReadArray (vArray v) ix
 {-# INLINE unsafeReadVector #-}
+
+writeVector :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> Int -> e -> m ()
+writeVector v ix e = GA.writeArray (vArray v) ix e
+{-# INLINE writeVector #-}
+
+unsafeWriteVector :: (PrimMonad m, GA.PrimMArray a e) => Vector a m e -> Int -> e -> m ()
+unsafeWriteVector v ix e = GA.unsafeWriteArray (vArray v) ix e
+{-# INLINE unsafeWriteVector #-}

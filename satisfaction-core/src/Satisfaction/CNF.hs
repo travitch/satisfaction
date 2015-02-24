@@ -3,16 +3,19 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ViewPatterns #-}
-module SAT.CNF (
+module Satisfaction.CNF (
   -- * Internal representation
   CNF,
   Clause,
+  clause,
   clauseCount,
   variableCount,
+  variableRange,
   clauseAt,
   clauseLiterals,
   clauseLiteral,
   clauseSize,
+  clauseIsSingleton,
   clauseList,
   clauseArray,
   mapSolution,
@@ -26,11 +29,21 @@ import qualified Data.Array.Prim as PA
 import qualified Data.Array.Prim.Generic as GA
 import qualified Data.Array.Prim.Unboxed as PUA
 import qualified Data.Map as M
+import qualified Data.Set as S
 
-import SAT.Literal
+import Satisfaction.Internal.Literal
 
 newtype Clause = MkClause { clauseAsArray :: PUA.Array Int Literal }
                deriving (Eq, Ord, Show)
+
+clause :: Literal -> [Literal] -> Clause
+clause l ls = MkClause (PUA.fromList (l : ls))
+{-# INLINE clause #-}
+
+-- | Return 'True' if the clause has only a single literal
+clauseIsSingleton :: Clause -> Bool
+clauseIsSingleton c = clauseSize c == 1
+{-# INLINE clauseIsSingleton #-}
 
 -- | Return the 'Literal's in a 'Clause' as a list.
 --
@@ -67,6 +80,7 @@ data CNF a =
   CNF { cnfClauses :: PA.Array Int Clause
       , cnfToVariable :: M.Map a Variable
       , cnfFromVariable :: PA.Array Variable a
+      , cnfVarRange :: (Variable, Variable)
       }
   deriving (Eq, Ord, Show)
 
@@ -87,6 +101,9 @@ variableCount :: CNF a -> Int
 variableCount = M.size . cnfToVariable
 {-# INLINE variableCount #-}
 
+variableRange :: CNF a -> (Variable, Variable)
+variableRange = cnfVarRange
+
 -- | Get the clause at the given index
 clauseAt :: CNF a -> Int -> Maybe Clause
 clauseAt cnf ix
@@ -94,6 +111,10 @@ clauseAt cnf ix
   | otherwise = Just $ cnfClauses cnf GA.! ix
 {-# INLINE clauseAt #-}
 
+-- | A literal is a positive or negative occurrence of a variable.
+--
+-- This representation allows the underlying variable to be of any
+-- type.
 data Lit a = L a -- ^ A positive literal
            | N a -- ^ A negative literal
            deriving (Eq, Ord, Show)
@@ -118,13 +139,14 @@ fromSimpleList (filter (not . null) -> klauses)
                    PA.array [ (ix, val)
                             | (val, ix) <- M.toList toVar
                             ]
+                 , cnfVarRange = (firstVariable, lastVar)
                  }
   where
     seed = ((firstVariable, firstVariable), M.empty, [])
-    (_, toVar, arrayClauses) = foldr addClause seed (zip [0..] klauses)
-    addClause (clauseIndex, clause) (vars, m, clauses) =
-      let (vars', m', arrayClauseElts) = foldr toArrayClause (vars, m, []) (zip [0..] clause)
-          arrayClause = MkClause $ PUA.array arrayClauseElts
+    ((_, lastVar), toVar, arrayClauses) = foldr addClause seed (zip [0..] klauses)
+    addClause (clauseIndex, cl) (vars, m, clauses) =
+      let (vars', m', arrayClauseElts) = foldr toArrayClause (vars, m, []) (zip [0 :: Int ..] cl)
+          arrayClause = MkClause $ PUA.fromList (unique (map snd arrayClauseElts))
       in (vars', m', (clauseIndex, arrayClause) : clauses)
     toArrayClause litRef@(ix, externalLit) (vars@(varSrc, _), m, elts) =
       let externalVar = literalVariable externalLit
@@ -139,3 +161,6 @@ fromSimpleList (filter (not . null) -> klauses)
              -- @m@) and then try again.
              let m' = M.insert externalVar varSrc m
              in toArrayClause litRef ((nextVariable varSrc, varSrc), m', elts)
+
+unique :: (Ord a) => [a] -> [a]
+unique = S.toList . S.fromList

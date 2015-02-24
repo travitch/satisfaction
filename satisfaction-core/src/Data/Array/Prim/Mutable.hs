@@ -34,8 +34,10 @@ newArray_ ix = newArray ix undefined
 
 readArray :: (PrimMonad m, IxZero i) => MArray m i a -> i -> m a
 readArray marr ix
-  | pureSize marr <= toZeroIndex ix = error "Data.Array.Prim.Mutable.readArray: Index out of bounds"
+  | ix' < 0 || pureSize marr <= ix' = error "Data.Array.Prim.Mutable.readArray: Index out of bounds"
   | otherwise = unsafeReadArray marr ix
+  where
+    ix' = toZeroIndex ix
 {-# INLINE readArray #-}
 
 unsafeReadArray :: (PrimMonad m, IxZero i) => MArray m i a -> i -> m a
@@ -47,8 +49,10 @@ unsafeReadArray marr ix =
 
 writeArray :: (PrimMonad m, IxZero i) => MArray m i a -> i -> a -> m ()
 writeArray marr ix elt
-  | pureSize marr <= toZeroIndex ix = error "Data.Array.Prim.Mutable.writeArray: Index out of bounds"
+  | ix' < 0 || pureSize marr <= ix' = error "Data.Array.Prim.Mutable.writeArray: Index out of bounds"
   | otherwise = unsafeWriteArray marr ix elt
+  where
+    ix' = toZeroIndex ix
 {-# INLINE writeArray #-}
 
 unsafeWriteArray :: (PrimMonad m, IxZero i) => MArray m i a -> i -> a -> m ()

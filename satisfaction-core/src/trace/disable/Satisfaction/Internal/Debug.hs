@@ -1,4 +1,4 @@
-module SAT.Solver.Debug ( traceIO ) where
+module Satisfaction.Internal.Debug ( traceIO ) where
 
 traceIO :: String -> IO ()
 traceIO _ = return ()

@@ -1,6 +1,10 @@
 name:                satisfaction-core
 version:             0.1.0.0
 synopsis:            Solvers for satisfiability and related problems
+description:         Satisfaction is a reasonably modern and efficient implementation of a DPLL/CDCL
+                     SAT solver.  The public interface is in the Satisfaction module.  The rest of
+                     the implementation (including internal data structures) is exposed, but guaranteed
+                     to be an unstable interface.
 license:             BSD3
 license-file:        LICENSE
 author:              Tristan Ravitch
@@ -13,14 +17,17 @@ flag trace
   description: Enable debug tracing
   default: False
 
-flag unsafe
-  description: Enable unsafe array access
-  default: True
-
 library
-  exposed-modules: SAT.Solver
-                   SAT.CNF
-                   SAT.Literal
+  exposed-modules: Satisfaction
+                   Satisfaction.CNF
+                   Satisfaction.Internal.AnalyzeConflict
+                   Satisfaction.Internal.Debug
+                   Satisfaction.Internal.LearnedClauses
+                   Satisfaction.Internal.Literal
+                   Satisfaction.Internal.Monad
+                   Satisfaction.Internal.Solver
+                   Satisfaction.Internal.UnitPropagation
+                   Control.Monad.Prim
                    Data.Array.Dynamic
                    Data.Array.Heap
                    Data.Array.Prim
@@ -33,10 +40,7 @@ library
                    Data.Ref.Prim
                    Data.Ix.Zero
                    Data.Unbox
-  other-modules: SAT.Solver.Monad
-                 SAT.Solver.Debug
-                 Control.Monad.Prim
-                 Data.Array.Prim.Internal
+  other-modules: Data.Array.Prim.Internal
                  Data.Array.Prim.Unboxed.Internal
   build-depends: base >= 4.6 && < 5,
                  containers >= 0.5 && < 0.6
@@ -47,7 +51,7 @@ library
     hs-source-dirs: src/trace/disable
 
   default-language: Haskell2010
-  ghc-options: -Wall -O1
+  ghc-options: -Wall -O
   ghc-prof-options: -auto-all
 
 test-suite satisfaction-tests

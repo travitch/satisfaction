@@ -12,6 +12,7 @@ import Control.Monad.ST ( ST )
 import qualified Data.IORef as IO
 import qualified Data.STRef as ST
 
+-- | The interface of primitive references
 class (Monad m) => PrimRef m where
   type Ref m :: * -> *
   newRef :: a -> m (Ref m a)

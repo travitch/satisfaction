@@ -5,13 +5,13 @@ module Data.Array.Heap (
   new,
   size,
   null,
+  member,
   insert,
   unsafeInsert,
+  unsafeUpdate,
   ensureStorage,
   takeMin
   ) where
-
-import Prelude hiding ( null )
 
 import Control.Applicative
 import Control.Monad ( unless, when )
@@ -22,6 +22,8 @@ import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
 import Data.Bits
 import Data.Ref.Prim
 import Data.Ix.Zero
+
+import Prelude hiding ( null )
 
 data Heap a m e = Heap { hArray :: DA.DArray a m Int e
                        , hIndices :: DA.DArray PUMA.MArray m e Int
@@ -49,6 +51,20 @@ new capacity comparator invalidElement = do
               , hLessThan = comparator
               }
 
+-- | Test if an element is in the heap
+member :: (PrimMonad m, GA.PrimMArray a e, IxZero e)
+       => Heap a m e
+       -> e
+       -> m Bool
+member h elt = do
+  sz <- GA.size (hIndices h)
+  case toZeroIndex elt < sz of
+    False -> return False
+    True -> do
+      ix <- GA.unsafeReadArray (hIndices h) elt
+      return (ix /= invalidIndex)
+{-# INLINE member #-}
+
 -- | Insert an element into the heap, growing if necessary
 insert :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
 insert h elt = do
@@ -59,19 +75,30 @@ insert h elt = do
 -- will not fit in the already allocated storage.
 unsafeInsert :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
 unsafeInsert h elt = do
-  curIndex <- DA.readArray (hIndices h) elt
+  curIndex <- DA.unsafeReadArray (hIndices h) elt
   case curIndex of
     _ | curIndex /= invalidIndex -> return ()
       | otherwise -> do
           tailIndex <- readRef szRef
           modifyRef' szRef (+1)
-          GA.writeArray arr tailIndex elt
-          GA.writeArray eltIndex elt tailIndex
+          GA.unsafeWriteArray arr tailIndex elt
+          GA.unsafeWriteArray eltIndex elt tailIndex
           percolateUp h elt tailIndex
   where
     szRef = hSize h
     arr = hArray h
     eltIndex = hIndices h
+
+unsafeUpdate :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
+unsafeUpdate h elt = do
+  curIndex <- DA.unsafeReadArray (hIndices h) elt
+  case curIndex of
+    _ | curIndex == invalidIndex -> unsafeInsert h elt
+      | otherwise -> do
+          percolateUp h elt curIndex
+          ix' <- DA.unsafeReadArray (hIndices h) elt
+          sz <- size h
+          percolateDown h elt ix' sz
 
 -- | Compute the index of the parent of the value at the given index.
 parentIndex :: Int -> Int
@@ -94,24 +121,24 @@ percolateUp h elt = go
   where
     go arrIx
       | arrIx == 0 = do
-          GA.writeArray (hArray h) arrIx elt
-          GA.writeArray (hIndices h) elt arrIx
+          GA.unsafeWriteArray (hArray h) arrIx elt
+          GA.unsafeWriteArray (hIndices h) elt arrIx
       | otherwise = do
           let arr = hArray h
               parentIx = parentIndex arrIx
-          parentVal <- GA.readArray arr parentIx
+          parentVal <- GA.unsafeReadArray arr parentIx
           res <- hLessThan h elt parentVal
           case res of
             False -> do
               -- At the right place
-              GA.writeArray arr arrIx elt
-              GA.writeArray (hIndices h) elt arrIx
+              GA.unsafeWriteArray arr arrIx elt
+              GA.unsafeWriteArray (hIndices h) elt arrIx
             True -> do
               -- Swap and recurse
-              GA.writeArray arr arrIx parentVal
-              GA.writeArray (hIndices h) parentVal arrIx
-              GA.writeArray arr parentIx elt
-              GA.writeArray (hIndices h) elt parentIx
+              GA.unsafeWriteArray arr arrIx parentVal
+              GA.unsafeWriteArray (hIndices h) parentVal arrIx
+              GA.unsafeWriteArray arr parentIx elt
+              GA.unsafeWriteArray (hIndices h) elt parentIx
               go parentIx
 
 
@@ -146,7 +173,7 @@ withSmaller :: (PrimMonad m, GA.PrimMArray a e)
 withSmaller (.<.) arr sz ix1 elt1 ix2 k
   | ix2 >= sz = k ix1 elt1
   | otherwise = do
-      elt2 <- GA.readArray arr ix2
+      elt2 <- GA.unsafeReadArray arr ix2
       elt1LT <- elt1 .<. elt2
       case elt1LT of
         True -> k ix1 elt1
@@ -169,10 +196,10 @@ percolateDown h elt sz = go
           -- actually swapped the elements and need to recursively
           -- proceed.
           unless (smallestIx == arrIx) $ do
-            GA.writeArray arr arrIx smallestElt
-            GA.writeArray (hIndices h) smallestElt arrIx
-            GA.writeArray arr smallestIx elt
-            GA.writeArray (hIndices h) elt smallestIx
+            GA.unsafeWriteArray arr arrIx smallestElt
+            GA.unsafeWriteArray (hIndices h) smallestElt arrIx
+            GA.unsafeWriteArray arr smallestIx elt
+            GA.unsafeWriteArray (hIndices h) elt smallestIx
             go smallestIx
 
 size :: (PrimMonad m, GA.PrimMArray a e) => Heap a m e -> m Int
