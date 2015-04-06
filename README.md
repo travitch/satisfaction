@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/travitch/satisfaction.svg?branch=master)](https://travis-ci.org/travitch/satisfaction)
+
 satisfaction is an implementation of a SAT solver in Haskell.  One day, it may evolve into an SMT solver.
 
 The implementation is split across several Haskell packages:
