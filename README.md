@@ -6,9 +6,21 @@ The implementation is split across several Haskell packages:
 
     The core contains the solver implementation.  It has minimal
     dependencies (containers and base).  The interesting modules are
-    in the SAT.* namespace.
+    in the Satisfaction.* namespace.  There are some support data
+    structures exposed, but their interfaces are guaranteed to be
+    unstable.
 
 * satisfaction
 
     The top-level package provides a binary that can understand DIMACS
     formatted problem instances.
+
+# Build instructions
+
+```{.bash}
+cabal sandbox init
+cabal sandbox add-source satisfaction-core
+cabal sandbox add-source satisfaction
+
+cabal install satisfaction
+```
