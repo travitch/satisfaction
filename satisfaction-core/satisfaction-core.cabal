@@ -22,9 +22,9 @@ library
                    Satisfaction.CNF
                    Satisfaction.Internal.AnalyzeConflict
                    Satisfaction.Internal.Debug
-                   Satisfaction.Internal.LearnedClauses
                    Satisfaction.Internal.Literal
                    Satisfaction.Internal.Monad
+                   Satisfaction.Internal.Simplify
                    Satisfaction.Internal.Solver
                    Satisfaction.Internal.UnitPropagation
                    Control.Monad.Prim

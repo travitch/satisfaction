@@ -10,7 +10,7 @@ module Satisfaction.Internal.AnalyzeConflict (
 import qualified Data.Array.Prim.Generic as GA
 import qualified Data.Array.Traverse as AT
 import qualified Data.Array.Vector as V
-import Data.IORef
+import qualified Data.Ref.Prim as P
 
 import qualified Satisfaction.CNF as C
 import qualified Satisfaction.Internal.Literal as L
@@ -31,8 +31,8 @@ data Conflict = Conflict { cAssertingLit :: !L.Literal
 analyzeConflict :: (Conflict -> Solver a) -> ClauseRef -> Solver a
 analyzeConflict k clauseNum = do
   e <- ask
-  liftIO $ modifyIORef' (eCurrentConflicts e) (+1)
-  nAssignments <- liftIO $ V.size (eDecisionStack e)
+  P.modifyRef' (eCurrentConflicts e) (+1)
+  nAssignments <- V.size (eDecisionStack e)
   clearSeenMarkers
   conflictClause <- clauseAt clauseNum
   bumpClauseActivity clauseNum
@@ -92,8 +92,8 @@ withFalseLiterals conflictClause nodesToUIP0 maxLevel0 learnt0 kDone =
     processReason lit !ix nodesToUIP maxLevel learnt = do
       let var = L.var lit
       e <- ask
-      wasSeen <- liftIO $ GA.unsafeReadArray (eSeen e) var
-      varAssignedAtLevel <- liftIO $ GA.unsafeReadArray (eVarLevels e) var
+      wasSeen <- GA.unsafeReadArray (eSeen e) var
+      varAssignedAtLevel <- GA.unsafeReadArray (eVarLevels e) var
       case wasSeen /= 1 && varAssignedAtLevel > 0 of
         False -> go ix nodesToUIP maxLevel learnt
         True -> do
@@ -105,7 +105,7 @@ withFalseLiterals conflictClause nodesToUIP0 maxLevel0 learnt0 kDone =
           --
           -- Otherwise, it was assigned at a lower level and we want
           -- it to be part of our learned clause (ignoring dl == 0)
-          liftIO $ GA.unsafeWriteArray (eSeen e) var 1
+          GA.unsafeWriteArray (eSeen e) var 1
           bumpVariableActivity var
           case varAssignedAtLevel of
             _ | varAssignedAtLevel >= dl -> do
@@ -129,16 +129,16 @@ withNextConflictLit lastLitIndex kLit = go lastLitIndex
   where
     go ix = do
       e <- ask
-      lastLit <- liftIO $ V.unsafeReadVector (eDecisionStack e) ix
+      lastLit <- V.unsafeReadVector (eDecisionStack e) ix
       liftIO $ D.traceIO ("    [WNCL] With last decision: " ++ show lastLit)
-      seen <- liftIO $ GA.unsafeReadArray (eSeen e) (L.var lastLit)
+      seen <- GA.unsafeReadArray (eSeen e) (L.var lastLit)
       case seen == 1 of
         False -> do
           liftIO $ D.traceIO ("      [WNCL] Skipping (unmarked) " ++ show lastLit)
           go (ix - 1)
         True -> do
-          conflictIndex <- liftIO $ GA.unsafeReadArray (eDecisionReasons e) (L.var lastLit)
-          reasonLevel <- liftIO $ GA.unsafeReadArray (eVarLevels e) (L.var lastLit)
+          conflictIndex <- GA.unsafeReadArray (eDecisionReasons e) (L.var lastLit)
+          reasonLevel <- GA.unsafeReadArray (eVarLevels e) (L.var lastLit)
           liftIO $ D.traceIO ("    [WNCL] Last lit was assigned at dl " ++ show reasonLevel)
           liftIO $ D.traceIO ("    [WNCL] Conflict index is " ++ show conflictIndex)
           liftIO $ D.traceIO ("      [WNCL] Calling kLit")
@@ -153,7 +153,7 @@ withNextConflictLit lastLitIndex kLit = go lastLitIndex
 clearSeenMarkers :: Solver ()
 clearSeenMarkers = do
   seen <- asks eSeen
-  liftIO $ AT.forMArray_ seen $ \ix _ -> do
+  AT.forMArray_ seen $ \ix _ -> do
     GA.unsafeWriteArray seen ix 0
 
 {- Note [Conflict Analysis State]

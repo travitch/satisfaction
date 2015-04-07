@@ -70,6 +70,7 @@ insert :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
 insert h elt = do
   ensureStorage h elt
   unsafeInsert h elt
+{-# INLINABLE insert #-}
 
 -- | Insert an element into the heap.  Throws an error if the element
 -- will not fit in the already allocated storage.
@@ -88,6 +89,7 @@ unsafeInsert h elt = do
     szRef = hSize h
     arr = hArray h
     eltIndex = hIndices h
+{-# INLINABLE unsafeInsert #-}
 
 unsafeUpdate :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
 unsafeUpdate h elt = do
@@ -99,6 +101,7 @@ unsafeUpdate h elt = do
           ix' <- DA.unsafeReadArray (hIndices h) elt
           sz <- size h
           percolateDown h elt ix' sz
+{-# INLINABLE unsafeUpdate #-}
 
 -- | Compute the index of the parent of the value at the given index.
 parentIndex :: Int -> Int
@@ -160,6 +163,7 @@ takeMin h = do
         GA.writeArray (hIndices h) lastElt 0
         percolateDown h lastElt sz' 0
       return (Just minElt)
+{-# INLINEABLE takeMin #-}
 
 withSmaller :: (PrimMonad m, GA.PrimMArray a e)
             => (e -> e -> m Bool)

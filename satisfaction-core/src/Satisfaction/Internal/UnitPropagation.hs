@@ -7,7 +7,7 @@ module Satisfaction.Internal.UnitPropagation (
 
 import qualified Data.Array.Prim.Generic as GA
 import Data.Bits ( shiftL )
-import Data.IORef
+import qualified Data.Ref.Prim as P
 
 import qualified Data.Array.Vector as V
 import qualified Satisfaction.CNF as C
@@ -29,13 +29,13 @@ withQueuedDecision kEmpty kProp = do
   e <- ask
   let dvec = eDecisionStack e
       qref = ePropagationQueue e
-  decisionIndex <- liftIO $ readIORef qref
-  nAssignments <- liftIO $ V.size dvec
+  decisionIndex <- P.readRef qref
+  nAssignments <- V.size dvec
   case decisionIndex >= nAssignments of
     True -> kEmpty
     False -> do
-      lit <- liftIO $ V.unsafeReadVector dvec decisionIndex
-      liftIO $ modifyIORef' qref (+1)
+      lit <- V.unsafeReadVector dvec decisionIndex
+      P.modifyRef' qref (+1)
       kProp lit
 {-# INLINE withQueuedDecision #-}
 
@@ -71,8 +71,8 @@ updateWatchlists :: L.Literal -- ^ Literal causing the update
                  -> Solver a
 updateWatchlists l kConflict kUnsat kNext = do
   e <- ask
-  liftIO $ modifyIORef' (ePropagations e) (+1)
-  clausesWatching <- liftIO $ GA.unsafeReadArray (eClausesWatchingLiteral e) falseLit
+  P.modifyRef' (ePropagations e) (+1)
+  clausesWatching <- GA.unsafeReadArray (eClausesWatchingLiteral e) falseLit
   go clausesWatching 0
   where
     falseLit = L.neg l
@@ -105,7 +105,7 @@ updateWatchlists l kConflict kUnsat kNext = do
               liftIO $ D.traceIO ("    [uw] Encountered a unit conflict due to " ++ show otherLit ++ ", which is assigned " ++ show val)
               kConflict clauseNum
     go watchers ix = do
-      sz <- liftIO $ V.size watchers
+      sz <- V.size watchers
       case ix < sz of
         False -> do
           liftIO $ D.traceIO ("      [uw] Successfully updated all watches")
@@ -113,7 +113,7 @@ updateWatchlists l kConflict kUnsat kNext = do
           -- watches
           kNext
         True -> do
-          clauseNum <- liftIO $ V.unsafeReadVector watchers ix
+          clauseNum <- V.unsafeReadVector watchers ix
           cl <- clauseAt clauseNum
           liftIO $ D.traceIO ("  [uw] Updating watches for clause " ++ show clauseNum ++ ": " ++ show cl)
           e <- ask
@@ -135,10 +135,10 @@ updateWatchlists l kConflict kUnsat kNext = do
               let whenUnit = kUnit clauseNum otherLit watchers ix
               withTrueOrUnassignedLiteral whenUnit cl otherLit $ \newWatchedLit -> do
                 liftIO $ D.traceIO ("    [uw] Now watching " ++ show newWatchedLit)
-                liftIO $ GA.unsafeWriteArray (eWatchedLiterals e) (2 * clauseNum + 1) newWatchedLit
-                liftIO $ V.removeElement watchers ix
-                watchingLit <- liftIO $ GA.unsafeReadArray (eClausesWatchingLiteral e) newWatchedLit
-                liftIO $ V.push watchingLit clauseNum
+                GA.unsafeWriteArray (eWatchedLiterals e) (2 * clauseNum + 1) newWatchedLit
+                V.removeElement watchers ix
+                watchingLit <- GA.unsafeReadArray (eClausesWatchingLiteral e) newWatchedLit
+                V.push watchingLit clauseNum
                 -- We don't increment @ix@ because we removed the
                 -- element that was at @ix@ and replaced it with a
                 -- new one, so we need to check ix again.
@@ -155,16 +155,15 @@ updateWatchlists l kConflict kUnsat kNext = do
 normalizeWatchedLiterals :: ClauseRef -> L.Literal -> Solver L.Literal
 normalizeWatchedLiterals clauseRef falseLit = do
   e <- ask
-  liftIO $ do
-    let watches = eWatchedLiterals e
-    watch1 <- GA.unsafeReadArray watches watch1Ix
-    watch2 <- GA.unsafeReadArray watches watch2Ix
-    case watch2 == falseLit of
-      True -> return watch1
-      False -> do
-        GA.unsafeWriteArray watches watch1Ix watch2
-        GA.unsafeWriteArray watches watch2Ix watch1
-        return watch2
+  let watches = eWatchedLiterals e
+  watch1 <- GA.unsafeReadArray watches watch1Ix
+  watch2 <- GA.unsafeReadArray watches watch2Ix
+  case watch2 == falseLit of
+    True -> return watch1
+    False -> do
+      GA.unsafeWriteArray watches watch1Ix watch2
+      GA.unsafeWriteArray watches watch2Ix watch1
+      return watch2
   where
     watch1Ix = clauseRef `shiftL` 1
     watch2Ix = watch1Ix + 1
@@ -201,8 +200,8 @@ withTrueOrUnassignedLiteral kConflict clause ignoreLit withLit = go 0
 clearPropagationQueue :: Solver ()
 clearPropagationQueue = do
   e <- ask
-  nAssignments <- liftIO $ V.size (eDecisionStack e)
-  liftIO $ writeIORef (ePropagationQueue e) nAssignments
+  nAssignments <- V.size (eDecisionStack e)
+  P.writeRef (ePropagationQueue e) nAssignments
 
 
 {- Note [Unit Propagation]

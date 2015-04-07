@@ -26,8 +26,8 @@ import qualified Data.Array.Prim.Unboxed as PUA
 import qualified Satisfaction.CNF as C
 import qualified Satisfaction.Internal.Literal as L
 import Satisfaction.Internal.AnalyzeConflict
-import Satisfaction.Internal.LearnedClauses
 import Satisfaction.Internal.Monad
+import Satisfaction.Internal.Simplify
 import Satisfaction.Internal.UnitPropagation
 import qualified Satisfaction.Internal.Debug as D
 

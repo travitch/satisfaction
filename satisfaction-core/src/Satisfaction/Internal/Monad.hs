@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies #-}
 -- | These are internal types for the solver
 --
 -- These types are internal and specific to the CDCL solver.  More
@@ -28,13 +29,16 @@ module Satisfaction.Internal.Monad (
   bumpClauseActivity,
   decayClauseActivity,
   restartWith,
-  simplifyClauses,
   extractStatistics,
   extractAssignment
   ) where
 
+import GHC.IO ( IO(..) )
+import GHC.Exts ( RealWorld )
+
 import Control.Applicative
 import Control.Monad ( ap, replicateM_ )
+import qualified Control.Monad.Prim as P
 import qualified Data.Foldable as F
 import Data.IORef
 import Data.Int ( Int8 )
@@ -49,6 +53,7 @@ import qualified Data.Array.Prim.Unboxed as PUA
 import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
 import qualified Data.Array.Traverse as AT
 import qualified Data.Array.Vector as V
+import qualified Data.Ref.Prim as P
 
 import qualified Satisfaction.CNF as C
 import qualified Satisfaction.Internal.Literal as L
@@ -86,71 +91,71 @@ data Config = Config { cVariableActivityDecayFactor :: Double
 -- The last variable is an IORef because we may want to add new variables
 -- internally later (e.g., for SMT solving).
 data Env = Env { eConfig :: Config
-               , eClausesWatchingLiteral :: PMA.MArray IO L.Literal (V.Vector PUMA.MArray IO ClauseRef)
+               , eClausesWatchingLiteral :: PMA.MArray Solver L.Literal (V.Vector PUMA.MArray Solver ClauseRef)
                  -- ^ This array is of length @2n@.  Index @i@ is the
                  -- list of clauses (by index) watching literal @i@.
                  -- Index @2i+1@ is the list of clauses watching @~i@.
-               , eWatchedLiterals :: DA.DArray PUMA.MArray IO ClauseRef L.Literal
+               , eWatchedLiterals :: DA.DArray PUMA.MArray Solver ClauseRef L.Literal
                  -- ^ The array is of length @2c@ where @c@ is the number
                  -- of clauses.  Index @2i@ is the first literal being
                  -- watched for clause @i@.  Index @2i+1@ is the second
                  -- literal being watched for clause @i@.
-               , eAssignment :: PUMA.MArray IO L.Variable L.Value
+               , eAssignment :: PUMA.MArray Solver L.Variable L.Value
                  -- ^ The current assignment state
-               , eDecisionStack :: V.Vector PUMA.MArray IO L.Literal
+               , eDecisionStack :: V.Vector PUMA.MArray Solver L.Literal
                  -- ^ A record of the decisions made
-               , eDecisionBoundaries :: V.Vector PUMA.MArray IO Int
+               , eDecisionBoundaries :: V.Vector PUMA.MArray Solver Int
                  -- ^ Boundary markers between decision
                  -- levels in the decision stack.
-               , eVarLevels :: PUMA.MArray IO L.Variable Int
+               , eVarLevels :: PUMA.MArray Solver L.Variable Int
                  -- ^ The decision level for each variable.
-               , eDecisionReasons :: PUMA.MArray IO L.Variable ClauseRef
+               , eDecisionReasons :: PUMA.MArray Solver L.Variable ClauseRef
                  -- ^ The clause that was the reason for a
                  -- given assertion.  -1 if this was a decision.
-               , eProblemClauses :: PMA.MArray IO ClauseRef C.Clause
+               , eProblemClauses :: PMA.MArray Solver ClauseRef C.Clause
                  -- ^ Given problem clauses
-               , eLearnedClauses :: DA.DArray PMA.MArray IO ClauseRef C.Clause
+               , eLearnedClauses :: DA.DArray PMA.MArray Solver ClauseRef C.Clause
                  -- ^ Learned clause storage
-               , eLearnedClauseCount :: IORef Int
+               , eLearnedClauseCount :: P.Ref Solver Int
                  -- ^ The number of learned clauses.
-               , eClauseRefPool :: H.Heap PUMA.MArray IO ClauseRef
+               , eClauseRefPool :: H.Heap PUMA.MArray Solver ClauseRef
                  -- ^ Available clause refs
-               , ePropagationQueue :: IORef Int
+               , ePropagationQueue :: P.Ref Solver Int
                  -- ^ Literals that have been assigned False that we
                  -- need to propagate units for.  This is an index
                  -- into the decision stack.
-               , eMaxLearnedClauses :: IORef Int
+               , eMaxLearnedClauses :: P.Ref Solver Int
                , eFirstVar :: L.Variable
-               , eLastVar :: IORef L.Variable
-               , eVariableOrder :: H.Heap PUMA.MArray IO L.Variable
-               , eVariableIncrement :: IORef Double
-               , eVariableActivity :: PUMA.MArray IO L.Variable Double
-               , eClauseIncrement :: IORef Double
-               , eClauseActivity :: DA.DArray PUMA.MArray IO ClauseRef Double
-               , eMaxConflicts :: IORef Int
+               , eLastVar :: P.Ref Solver L.Variable
+               , eVariableOrder :: H.Heap PUMA.MArray Solver L.Variable
+               , eVariableIncrement :: P.Ref Solver Double
+               , eVariableActivity :: PUMA.MArray Solver L.Variable Double
+               , eClauseIncrement :: P.Ref Solver Double
+               , eClauseActivity :: DA.DArray PUMA.MArray Solver ClauseRef Double
+               , eMaxConflicts :: P.Ref Solver Int
                  -- ^ The maximum number of conflicts to allow before
                  -- restarting.  If this is -1, do not restart.
-               , eCurrentConflicts :: IORef Int
+               , eCurrentConflicts :: P.Ref Solver Int
                  -- ^ The number of conflicts since the last restart
 
                  -- Overall statistics
 
-               , eTotalConflicts :: IORef Int
+               , eTotalConflicts :: P.Ref Solver Int
                  -- ^ The total number of conflicts encountered
-               , eRestartCount :: IORef Int
+               , eRestartCount :: P.Ref Solver Int
                  -- ^ The number of restarts
-               , eAtGround :: IORef Int
+               , eAtGround :: P.Ref Solver Int
                  -- ^ The number of times we backtracked to the ground decision level
-               , eDecisionCount :: IORef Int
+               , eDecisionCount :: P.Ref Solver Int
                  -- ^ The number of decisions made
-               , ePropagations :: IORef Int
+               , ePropagations :: P.Ref Solver Int
                  -- ^ The number of propagations
-               , eLearnedCleanup :: IORef Int
+               , eLearnedCleanup :: P.Ref Solver Int
                  -- ^ The number of times the learned clause DB was reduced
 
                  -- Cached storage
 
-               , eSeen :: PUMA.MArray IO L.Variable Int8
+               , eSeen :: PUMA.MArray Solver L.Variable Int8
                  -- ^ Variables that have been seen during conflict
                  -- analysis.  This is only used during conflict
                  -- analysis, but is retained globally to avoid having
@@ -172,13 +177,13 @@ data Statistics =
 extractStatistics :: Solver Statistics
 extractStatistics = do
   e <- ask
-  totalConflicts <- liftIO $ readIORef (eTotalConflicts e)
-  curConflicts <- liftIO $ readIORef (eCurrentConflicts e)
-  restartCount <- liftIO $ readIORef (eRestartCount e)
-  groundLevels <- liftIO $ readIORef (eAtGround e)
-  decisionCount <- liftIO $ readIORef (eDecisionCount e)
-  props <- liftIO $ readIORef (ePropagations e)
-  cleaned <- liftIO $ readIORef (eLearnedCleanup e)
+  totalConflicts <- P.readRef (eTotalConflicts e)
+  curConflicts <- P.readRef (eCurrentConflicts e)
+  restartCount <- P.readRef (eRestartCount e)
+  groundLevels <- P.readRef (eAtGround e)
+  decisionCount <- P.readRef (eDecisionCount e)
+  props <- P.readRef (ePropagations e)
+  cleaned <- P.readRef (eLearnedCleanup e)
   return Statistics { sTotalConflicts = totalConflicts + curConflicts
                     , sRestartCount = restartCount
                     , sGroundLevels = groundLevels
@@ -195,22 +200,13 @@ extractStatistics = do
 clauseAt :: ClauseRef -> Solver C.Clause
 clauseAt clauseRef = do
   e <- ask
-  nProblemClauses <- liftIO $ GA.size (eProblemClauses e)
+  nProblemClauses <- GA.size (eProblemClauses e)
   case clauseRef < nProblemClauses of
-    True -> liftIO $ GA.unsafeReadArray (eProblemClauses e) clauseRef
+    True -> GA.unsafeReadArray (eProblemClauses e) clauseRef
     False -> do
       let cr' = clauseRef - nProblemClauses
-      liftIO $ GA.unsafeReadArray (eLearnedClauses e) cr'
+      GA.unsafeReadArray (eLearnedClauses e) cr'
 {-# INLINE clauseAt #-}
-
-simplifyClauses :: Solver ()
-simplifyClauses = do
-  dl <- getDecisionLevel
-  case dl > 0 of
-    True -> return ()
-    False -> do
-      e <- ask
-      liftIO $ modifyIORef' (eAtGround e) (+1)
 
 -- | If we have passed the conflict threshold, restart by calling
 -- @kRestart@.  Otherwise, continue searching.
@@ -219,20 +215,20 @@ simplifyClauses = do
 restartWith :: Solver a -> Solver a -> Solver a
 restartWith kRestart kSearch = do
   e <- ask
-  curConflicts <- liftIO $ readIORef (eCurrentConflicts e)
-  maxConflicts <- liftIO $ readIORef (eMaxConflicts e)
+  curConflicts <- P.readRef (eCurrentConflicts e)
+  maxConflicts <- P.readRef (eMaxConflicts e)
   case curConflicts < maxConflicts || maxConflicts == -1 of
     True -> kSearch
     False -> do
       let conf = eConfig e
           nextGrowth = fromIntegral maxConflicts * cMaxConflictGrowthFactor conf
-      liftIO $ modifyIORef' (eTotalConflicts e) (+curConflicts)
-      liftIO $ writeIORef (eCurrentConflicts e) 0
-      liftIO $ writeIORef (eMaxConflicts e) (max (floor nextGrowth) (-1))
-      liftIO $ modifyIORef' (eRestartCount e) (+1)
-      maxLearned <- liftIO $ readIORef (eMaxLearnedClauses e)
+      P.modifyRef' (eTotalConflicts e) (+curConflicts)
+      P.writeRef (eCurrentConflicts e) 0
+      P.writeRef (eMaxConflicts e) (max (floor nextGrowth) (-1))
+      P.modifyRef' (eRestartCount e) (+1)
+      maxLearned <- P.readRef (eMaxLearnedClauses e)
       let nextMaxLearned = fromIntegral maxLearned * cMaxLearnedClauseGrowthFactor conf
-      liftIO $ writeIORef (eMaxLearnedClauses e) (floor nextMaxLearned)
+      P.writeRef (eMaxLearnedClauses e) (floor nextMaxLearned)
       undoUntil 0
       kRestart
 
@@ -270,15 +266,15 @@ learnClause btLevel l c = do
     [] -> return ()
     _:[] -> assertLiteral l noClause
     l1:rest@(_:_) -> do
-      liftIO $ modifyIORef' (eLearnedClauseCount e) (+1)
+      P.modifyRef' (eLearnedClauseCount e) (+1)
       cref <- allocateClauseRef
       liftIO $ D.traceIO ("  [lc] Clause ref allocated: " ++ show cref)
-      nProblemClauses <- liftIO $ GA.size (eProblemClauses e)
+      nProblemClauses <- GA.size (eProblemClauses e)
       let ix = cref - nProblemClauses
-      liftIO $ GA.unsafeWriteArray (eLearnedClauses e) ix c
+      GA.unsafeWriteArray (eLearnedClauses e) ix c
       setFirstWatch cref l1
-      lw1 <- liftIO $ GA.unsafeReadArray (eClausesWatchingLiteral e) l1
-      liftIO $ V.push lw1 cref
+      lw1 <- GA.unsafeReadArray (eClausesWatchingLiteral e) l1
+      V.push lw1 cref
       watchFirstAtLevel btLevel cref rest
       assertLiteral l cref
 
@@ -289,11 +285,11 @@ learnClause btLevel l c = do
 allocateClauseRef :: Solver ClauseRef
 allocateClauseRef = do
   e <- ask
-  mref <- liftIO $ H.takeMin (eClauseRefPool e)
-  nProblemClauses <- liftIO $ GA.size (eProblemClauses e)
+  mref <- H.takeMin (eClauseRefPool e)
+  nProblemClauses <- GA.size (eProblemClauses e)
   case mref of
     Just ref -> return (ref + nProblemClauses)
-    Nothing -> liftIO $ do
+    Nothing -> do
       sz0 <- GA.size (eLearnedClauses e)
       let sz1 = sz0 * 2
       DA.grow (eLearnedClauses e) sz1
@@ -307,14 +303,14 @@ allocateClauseRef = do
 setFirstWatch :: ClauseRef -> L.Literal -> Solver ()
 setFirstWatch cref l = do
   e <- ask
-  liftIO $ GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2) l
+  GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2) l
 {-# INLINE setFirstWatch #-}
 
 -- | Set the second watch for the given 'ClauseRef' to the named 'L.Literal'
 setSecondWatch :: ClauseRef -> L.Literal -> Solver ()
 setSecondWatch cref l = do
   e <- ask
-  liftIO $ GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2 + 1) l
+  GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2 + 1) l
 {-# INLINE setSecondWatch #-}
 
 -- | Choose the first literal from the list that was assigned at the
@@ -326,13 +322,13 @@ watchFirstAtLevel btLevel cref lits = go lits
     go [] = error "impossible: No matching literals at watchFirstAtLevel"
     go (l:rest) = do
       e <- ask
-      lv <- liftIO $ GA.unsafeReadArray (eVarLevels e) (L.var l)
+      lv <- GA.unsafeReadArray (eVarLevels e) (L.var l)
       case lv == btLevel of
         False -> go rest
         True -> do
           setSecondWatch cref l
-          lw2 <- liftIO $ GA.unsafeReadArray (eClausesWatchingLiteral e) l
-          liftIO $ V.push lw2 cref
+          lw2 <- GA.unsafeReadArray (eClausesWatchingLiteral e) l
+          V.push lw2 cref
 
 -- | Determine the value of the given 'L.Literal'
 --
@@ -341,7 +337,7 @@ watchFirstAtLevel btLevel cref lits = go lits
 literalValue :: L.Literal -> Solver L.Value
 literalValue l = do
   assignments <- asks eAssignment
-  val <- liftIO $ GA.unsafeReadArray assignments (L.var l)
+  val <- GA.unsafeReadArray assignments (L.var l)
   return $! L.litValue l val
 {-# INLINE literalValue #-}
 
@@ -354,8 +350,8 @@ undoLastDecision =
     assignVariableValue (L.var lastLit) L.unassigned noClause
     resetVariable (L.var lastLit)
     e <- ask
-    liftIO $ H.insert (eVariableOrder e) (L.var lastLit)
-    liftIO $ V.pop decisions 1
+    H.insert (eVariableOrder e) (L.var lastLit)
+    V.pop decisions 1
 {-# INLINE undoLastDecision #-}
 
 -- | Undo assignments until the given decision level.  This is for use
@@ -367,12 +363,12 @@ undoUntil targetDl = do
     False -> return ()
     True -> do
       e <- ask
-      nAssignments <- liftIO $ V.size (eDecisionStack e)
-      dlBoundary <- liftIO $ V.unsafeReadVector (eDecisionBoundaries e) targetDl
+      nAssignments <- V.size (eDecisionStack e)
+      dlBoundary <- V.unsafeReadVector (eDecisionBoundaries e) targetDl
       replicateM_ (nAssignments - dlBoundary) undoLastDecision
-      liftIO $ writeIORef (ePropagationQueue e) dlBoundary
-      nBounds <- liftIO $ V.size (eDecisionBoundaries e)
-      liftIO $ V.pop (eDecisionBoundaries e) (nBounds - targetDl)
+      P.writeRef (ePropagationQueue e) dlBoundary
+      nBounds <- V.size (eDecisionBoundaries e)
+      V.pop (eDecisionBoundaries e) (nBounds - targetDl)
 
 -- | Looks up the last decision made and calls the given continuation with it.
 --
@@ -381,8 +377,8 @@ undoUntil targetDl = do
 withLastDecision :: (L.Literal -> Solver a) -> Solver a
 withLastDecision k = do
   e <- ask
-  nDecisions <- liftIO $ V.size (eDecisionStack e)
-  lastLit <- liftIO $ V.unsafeReadVector (eDecisionStack e) (nDecisions - 1)
+  nDecisions <- V.size (eDecisionStack e)
+  lastLit <- V.unsafeReadVector (eDecisionStack e) (nDecisions - 1)
   k lastLit
 {-# INLINE withLastDecision #-}
 
@@ -398,14 +394,14 @@ withNextDecidedLiteral kDone kLit = go
   where
     go = do
       e <- ask
-      mvar <- liftIO $ H.takeMin (eVariableOrder e)
+      mvar <- H.takeMin (eVariableOrder e)
       case mvar of
         Nothing -> kDone
         Just var -> do
-          val <- liftIO $ GA.unsafeReadArray (eAssignment e) var
+          val <- GA.unsafeReadArray (eAssignment e) var
           case L.isUnassigned val of
             True -> do
-              liftIO $ modifyIORef' (eDecisionCount e) (+1)
+              P.modifyRef' (eDecisionCount e) (+1)
               kLit (L.toPositiveLiteral var)
             False -> go
 {-# INLINE withNextDecidedLiteral #-}
@@ -422,7 +418,7 @@ assertLiteral lit clNum = do
   let var = L.var lit
       val = L.satisfyLiteral lit
   assignVariableValue var val clNum
-  liftIO $ V.unsafePush (eDecisionStack e) lit
+  V.unsafePush (eDecisionStack e) lit
 {-# INLINE assertLiteral #-}
 
 -- | Try to assert a literal, returning False if the assertion causes
@@ -432,19 +428,19 @@ tryAssertLiteral lit clNum = do
   e <- ask
   let var = L.var lit
       val = L.satisfyLiteral lit
-  val0 <- liftIO $ GA.unsafeReadArray (eAssignment e) var
+  val0 <- GA.unsafeReadArray (eAssignment e) var
   case val0 /= L.unassigned && val0 /= val of
     True -> return False
     False -> do
       assignVariableValue var val clNum
-      liftIO $ V.unsafePush (eDecisionStack e) lit
+      V.unsafePush (eDecisionStack e) lit
       return True
 
 -- | Get the current decision level
 getDecisionLevel :: Solver Int
 getDecisionLevel = do
   bv <- asks eDecisionBoundaries
-  liftIO (V.size bv)
+  V.size bv
 {-# INLINE getDecisionLevel #-}
 
 -- | Increment the current decision level
@@ -456,8 +452,8 @@ getDecisionLevel = do
 incrementDecisionLevel :: Solver ()
 incrementDecisionLevel = do
   e <- ask
-  dl <- liftIO $ V.size (eDecisionStack e)
-  liftIO $ V.unsafePush (eDecisionBoundaries e) dl
+  dl <- V.size (eDecisionStack e)
+  V.unsafePush (eDecisionBoundaries e) dl
   level <- getDecisionLevel
   liftIO $ D.traceIO ("[idl] At decision level " ++ show level ++ ", which starts at index " ++ show dl)
 
@@ -469,21 +465,19 @@ assignVariableValue :: L.Variable -> L.Value -> ClauseRef -> Solver ()
 assignVariableValue var val clNum = do
   e <- ask
   dl <- getDecisionLevel
-  liftIO $ do
-    D.traceIO ("  [assign] Assigning " ++ show val ++ " to " ++ show var ++ " at " ++ show dl)
-    GA.unsafeWriteArray (eAssignment e) var val
-    GA.unsafeWriteArray (eVarLevels e) var dl
-    GA.unsafeWriteArray (eDecisionReasons e) var clNum
+  liftIO $ D.traceIO ("  [assign] Assigning " ++ show val ++ " to " ++ show var ++ " at " ++ show dl)
+  GA.unsafeWriteArray (eAssignment e) var val
+  GA.unsafeWriteArray (eVarLevels e) var dl
+  GA.unsafeWriteArray (eDecisionReasons e) var clNum
 {-# INLINE assignVariableValue #-}
 
 resetVariable :: L.Variable -> Solver ()
 resetVariable var = do
   e <- ask
-  liftIO $ do
-    D.traceIO ("[reset] Setting the state of " ++ show var ++ " to triedNothing")
-    GA.unsafeWriteArray (eAssignment e) var L.unassigned
-    GA.unsafeWriteArray (eVarLevels e) var (-1)
-    GA.unsafeWriteArray (eDecisionReasons e) var noClause
+  liftIO $ D.traceIO ("[reset] Setting the state of " ++ show var ++ " to triedNothing")
+  GA.unsafeWriteArray (eAssignment e) var L.unassigned
+  GA.unsafeWriteArray (eVarLevels e) var (-1)
+  GA.unsafeWriteArray (eDecisionReasons e) var noClause
 {-# INLINE resetVariable #-}
 
 -- | Extract the current assignment as a pure value.
@@ -493,7 +487,7 @@ resetVariable var = do
 extractAssignment :: Solver (PUA.Array L.Variable L.Value)
 extractAssignment = do
   a <- asks eAssignment
-  liftIO $ PUMA.freeze a
+  PUMA.freeze a
 
 -- | Implicitly decay variable activities by *increasing* the variable
 -- activity increment.
@@ -511,20 +505,19 @@ decayVariableActivity = do
 bumpVariableActivity :: L.Variable -> Solver ()
 bumpVariableActivity var = do
   e <- ask
-  liftIO $ do
-    amount <- readIORef (eVariableIncrement e)
-    act0 <- GA.unsafeReadArray (eVariableActivity e) var
-    let act1 = act0 + amount
-    GA.unsafeWriteArray (eVariableActivity e) var act1
-    case act1 > activityCap of
-      False -> return ()
-      True -> do
-        let arr = eVariableActivity e
-            factor = 1 / activityCap
-        AT.forMArray_ arr $ \ix elt -> do
-          GA.unsafeWriteArray arr ix (elt * factor)
-        modifyIORef' (eVariableIncrement e) (* factor)
-    H.unsafeUpdate (eVariableOrder e) var
+  amount <- P.readRef (eVariableIncrement e)
+  act0 <- GA.unsafeReadArray (eVariableActivity e) var
+  let act1 = act0 + amount
+  GA.unsafeWriteArray (eVariableActivity e) var act1
+  case act1 > activityCap of
+    False -> return ()
+    True -> do
+      let arr = eVariableActivity e
+          factor = 1 / activityCap
+      AT.forMArray_ arr $ \ix elt -> do
+        GA.unsafeWriteArray arr ix (elt * factor)
+      P.modifyRef' (eVariableIncrement e) (* factor)
+  H.unsafeUpdate (eVariableOrder e) var
 
 -- | Decay existing clause activities implicitly by *increasing* the
 -- clause increment value
@@ -541,12 +534,12 @@ decayClauseActivity = do
 bumpClauseActivity :: ClauseRef -> Solver ()
 bumpClauseActivity cref = do
   e <- ask
-  nProblemClauses <- liftIO $ GA.size (eProblemClauses e)
+  nProblemClauses <- GA.size (eProblemClauses e)
   case cref < nProblemClauses of
     True -> return ()
-    False -> liftIO $ do
+    False -> do
       let cref' = cref - nProblemClauses
-      amount <- readIORef (eClauseIncrement e)
+      amount <- P.readRef (eClauseIncrement e)
       act0 <- GA.unsafeReadArray (eClauseActivity e) cref'
       let act1 = act0 + amount
       GA.unsafeWriteArray (eClauseActivity e) cref' act1
@@ -557,14 +550,18 @@ bumpClauseActivity cref = do
               factor = 1 / activityCap
           AT.forMArray_ arr $ \ix elt -> do
             GA.unsafeWriteArray arr ix (elt * factor)
-          modifyIORef' (eClauseIncrement e) (* factor)
+          P.modifyRef' (eClauseIncrement e) (* factor)
 
 -- | A context in which a solver runs.  This is basically a ReaderT IO.
 newtype Solver a = S { runS :: Env -> IO a }
 
 -- | Run a solver with an environment set up for a given CNF formula.
 runSolver :: Config -> C.CNF b -> (Bool -> Solver a) -> IO a
-runSolver config cnf comp = do
+runSolver config cnf comp =
+  runS (bootstrapEnv config cnf comp) undefined
+
+bootstrapEnv :: Config -> C.CNF b -> (Bool -> Solver a) -> Solver a
+bootstrapEnv config cnf comp = do
   let vrange@(lowVar, highVar) = C.variableRange cnf
       lrange = (L.toPositiveLiteral lowVar, L.toNegativeLiteral highVar)
       nLits = rangeSize lrange
@@ -589,8 +586,8 @@ runSolver config cnf comp = do
   decisionBounds <- V.new nLits (-1)
   varLevels <- GA.newArray nVars (-1)
   seen <- GA.newArray nVars 0
-  qref <- newIORef 0
-  highVarRef <- newIORef highVar
+  qref <- P.newRef 0
+  highVarRef <- P.newRef highVar
   reasons <- GA.newArray nVars noClause
   pclauses <- GA.newArray (C.clauseCount cnf) undefined
 
@@ -600,24 +597,24 @@ runSolver config cnf comp = do
         v2a <- GA.unsafeReadArray varAct v2
         return (v1a > v2a)
   heap <- H.new nVars ordering lowVar
-  varInc <- newIORef 1
-  clauseInc <- newIORef 1
-  maxRef <- newIORef maxLearnedClauses
+  varInc <- P.newRef 1
+  clauseInc <- P.newRef 1
+  maxRef <- P.newRef maxLearnedClauses
   initializeVariableOrdering heap lowVar highVar
   lclauses <- GA.newArray learnedCap undefined
   clAct <- GA.newArray learnedCap 0
   pool <- H.new learnedCap (\a b -> return (a < b)) 0
   F.forM_ [0.. learnedCap - 1] $ \cref -> do
     H.insert pool cref
-  maxConflicts <- newIORef (cMaxConflicts config)
-  curConflicts <- newIORef 0
-  totalConflicts <- newIORef 0
-  restartCount <- newIORef 0
-  groundCount <- newIORef 0
-  props <- newIORef 0
-  decisions <- newIORef 0
-  cleanup <- newIORef 0
-  lccount <- newIORef 0
+  maxConflicts <- P.newRef (cMaxConflicts config)
+  curConflicts <- P.newRef 0
+  totalConflicts <- P.newRef 0
+  restartCount <- P.newRef 0
+  groundCount <- P.newRef 0
+  props <- P.newRef 0
+  decisions <- P.newRef 0
+  cleanup <- P.newRef 0
+  lccount <- P.newRef 0
   let env = Env { eConfig = config
                 , eClausesWatchingLiteral = cwl
                 , eWatchedLiterals = wl
@@ -650,7 +647,7 @@ runSolver config cnf comp = do
                 , eSeen = seen
                 }
 
-  runS (initializeWatches cnf >>= comp) env
+  liftIO (runS (initializeWatches cnf >>= comp) env)
 
 ask :: Solver Env
 ask = S $ \r -> return r
@@ -673,6 +670,22 @@ bindS m k = S $ \r -> do
   runS (k a) r
 {-# INLINE bindS #-}
 
+instance P.PrimMonad Solver where
+  type PrimState Solver = RealWorld
+  {-# INLINE primitive #-}
+  primitive x = S $ \_ -> IO x
+
+instance P.PrimRef Solver where
+  type Ref Solver = IORef
+  {-# INLINE newRef #-}
+  {-# INLINE readRef #-}
+  {-# INLINE writeRef #-}
+  {-# INLINE modifyRef' #-}
+  newRef v = liftIO (newIORef v)
+  readRef r = liftIO (readIORef r)
+  writeRef r v = liftIO (writeIORef r v)
+  modifyRef' r f = liftIO (modifyIORef' r f)
+
 instance Functor Solver where
   fmap f m = S $ \r -> do
     a <- runS m r
@@ -687,10 +700,10 @@ liftIO a = S $ \_ -> a
 {-# INLINE liftIO #-}
 
 -- | Insert all variables into the variable ordering
-initializeVariableOrdering :: H.Heap PUMA.MArray IO L.Variable
+initializeVariableOrdering :: H.Heap PUMA.MArray Solver L.Variable
                            -> L.Variable
                            -> L.Variable
-                           -> IO ()
+                           -> Solver ()
 initializeVariableOrdering heap lowVar highVar = go lowVar
   where
     go v
@@ -714,7 +727,7 @@ initializeWatches cnf = do
   where
     watchFirst cwl wl clauses hasContradiction ix clause = do
       case C.clauseLiterals clause of
-        l1 : l2 : _ -> liftIO $ do
+        l1 : l2 : _ -> do
           GA.unsafeWriteArray clauses ix clause
           GA.unsafeWriteArray wl (2 * ix) l1
           GA.unsafeWriteArray wl (2 * ix + 1) l2
