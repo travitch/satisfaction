@@ -83,6 +83,16 @@ removeLearnedClause ix cref = do
   H.insert (eClauseRefPool e) ix
   P.modifyRef' (eLearnedClauseCount e) (subtract 1)
 
+removeProblemClause :: ClauseRef -> Solver ()
+removeProblemClause cref = do
+  e <- ask
+  wl1 <- GA.unsafeReadArray (eWatchedLiterals e) (cref * 2)
+  wl2 <- GA.unsafeReadArray (eWatchedLiterals e) (cref * 2 + 1)
+  l1Watchers <- GA.unsafeReadArray (eClausesWatchingLiteral e) wl1
+  l2Watchers <- GA.unsafeReadArray (eClausesWatchingLiteral e) wl2
+  removeWatchedClause l1Watchers cref
+  removeWatchedClause l2Watchers cref
+  GA.unsafeWriteArray (eActiveProblemClauses e) cref 0
 
 forLearnedClauses :: a -> (a -> Int -> ClauseRef -> C.Clause -> Solver a) -> Solver a
 forLearnedClauses a k = do
@@ -170,30 +180,52 @@ simplifyClauses = do
     False -> do
       e <- ask
       P.modifyRef' (eAtGround e) (+1)
-      -- forLearnedClauses () $ \() ix cref c -> do
-      --   c' <- simplifyClause c
-      --   case c' of
-      --     [] -> removeLearnedClause ix cref
-      --     [l] -> do
-      --       removeLearnedClause ix cref
-      --       assertLiteral l noClause
-      --     l1:rest@(l2:_) -> do
-      --       let cl = C.clause l1 rest
-      --           watch1Ix = cref * 2
-      --           watch2Ix = watch1Ix + 1
-      --       w1 <- GA.unsafeReadArray (eWatchedLiterals e) watch1Ix
-      --       w2 <- GA.unsafeReadArray (eWatchedLiterals e) watch2Ix
-      --       wl1 <- GA.unsafeReadArray (eClausesWatchingLiteral e) w1
-      --       wl2 <- GA.unsafeReadArray (eClausesWatchingLiteral e) w2
-      --       removeWatchedClause wl1 cref
-      --       removeWatchedClause wl2 cref
-      --       GA.unsafeWriteArray (eLearnedClauses e) ix cl
-      --       GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2) l1
-      --       GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2 + 1) l2
-      --       wl1' <- GA.unsafeReadArray (eClausesWatchingLiteral e) l1
-      --       wl2' <- GA.unsafeReadArray (eClausesWatchingLiteral e) l2
-      --       V.push wl1' cref
-      --       V.push wl2' cref
+      AT.forMArray_ (eProblemClauses e) $ \ix c -> do
+        isActive <- GA.unsafeReadArray (eActiveProblemClauses e) ix
+        case isActive of
+          1 -> do
+            c' <- simplifyClause c
+            case c' of
+              [] -> removeProblemClause ix
+              [l] -> do
+                removeProblemClause ix
+                assertLiteral l noClause
+              _ -> return ()
+          _ -> return ()
+      forLearnedClauses () $ \() ix cref c -> do
+        c' <- simplifyClause c
+        case c' of
+          [] -> removeLearnedClause ix cref
+          [l] -> do
+            removeLearnedClause ix cref
+            assertLiteral l noClause
+          l1:rest@(l2:_) -> do
+            let cl = C.clause l1 rest
+                watch1Ix = cref * 2
+                watch2Ix = watch1Ix + 1
+            w1 <- GA.unsafeReadArray (eWatchedLiterals e) watch1Ix
+            w2 <- GA.unsafeReadArray (eWatchedLiterals e) watch2Ix
+            wl1 <- GA.unsafeReadArray (eClausesWatchingLiteral e) w1
+            wl2 <- GA.unsafeReadArray (eClausesWatchingLiteral e) w2
+            removeWatchedClause wl1 cref
+            removeWatchedClause wl2 cref
+            GA.unsafeWriteArray (eLearnedClauses e) ix cl
+            GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2) l1
+            GA.unsafeWriteArray (eWatchedLiterals e) (cref * 2 + 1) l2
+            wl1' <- GA.unsafeReadArray (eClausesWatchingLiteral e) l1
+            wl2' <- GA.unsafeReadArray (eClausesWatchingLiteral e) l2
+            V.push wl1' cref
+            V.push wl2' cref
 
 simplifyClause :: C.Clause -> Solver [L.Literal]
-simplifyClause = undefined
+simplifyClause c = do
+  go (C.clauseLiterals c) []
+  where
+    go [] acc = return acc
+    go (l:rest) acc = do
+      v <- literalValue l
+      case v of
+        _ | v == L.liftedTrue -> return []
+          | v == L.liftedFalse -> go rest acc
+          | otherwise -> go rest (l:acc)
+{-# INLINE simplifyClause #-}

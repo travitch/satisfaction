@@ -114,6 +114,12 @@ data Env = Env { eConfig :: Config
                  -- given assertion.  -1 if this was a decision.
                , eProblemClauses :: PMA.MArray Solver ClauseRef C.Clause
                  -- ^ Given problem clauses
+               , eActiveProblemClauses :: PUMA.MArray Solver ClauseRef Int8
+                 -- ^ 1 if the clause is active, and 0 otherwise.
+                 -- This is used to mark problem clauses as removed.
+                 -- An alternative would be to replace them with empty
+                 -- clauses, but I would rather maintain the invariant
+                 -- that all clauses in these lists are of length >= 2.
                , eLearnedClauses :: DA.DArray PMA.MArray Solver ClauseRef C.Clause
                  -- ^ Learned clause storage
                , eLearnedClauseCount :: P.Ref Solver Int
@@ -590,6 +596,7 @@ bootstrapEnv config cnf comp = do
   highVarRef <- P.newRef highVar
   reasons <- GA.newArray nVars noClause
   pclauses <- GA.newArray (C.clauseCount cnf) undefined
+  pactive <- GA.newArray (C.clauseCount cnf) 0
 
   varAct <- GA.newArray nVars 0
   let ordering v1 v2 = do
@@ -624,6 +631,7 @@ bootstrapEnv config cnf comp = do
                 , eDecisionReasons = reasons
                 , ePropagationQueue = qref
                 , eProblemClauses = pclauses
+                , eActiveProblemClauses = pactive
                 , eLearnedClauses = lclauses
                 , eLearnedClauseCount = lccount
                 , eClauseRefPool = pool
@@ -721,11 +729,12 @@ initializeWatches :: C.CNF a -> Solver Bool
 initializeWatches cnf = do
   e <- ask
   let clauses = eProblemClauses e
+      active = eActiveProblemClauses e
       cwl = eClausesWatchingLiteral e
       wl = eWatchedLiterals e
-  AT.foldArrayM (watchFirst cwl wl clauses) False (C.clauseArray cnf)
+  AT.foldArrayM (watchFirst cwl wl clauses active) False (C.clauseArray cnf)
   where
-    watchFirst cwl wl clauses hasContradiction ix clause = do
+    watchFirst cwl wl clauses active hasContradiction ix clause = do
       case C.clauseLiterals clause of
         l1 : l2 : _ -> do
           GA.unsafeWriteArray clauses ix clause
@@ -735,6 +744,7 @@ initializeWatches cnf = do
           V.push l1w ix
           l2w <- GA.readArray cwl l2
           V.push l2w ix
+          GA.unsafeWriteArray active ix 1
           return hasContradiction
         l : [] -> do
           validAssertion <- tryAssertLiteral l noClause
