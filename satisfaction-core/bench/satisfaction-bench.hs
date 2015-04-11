@@ -9,6 +9,7 @@ import qualified Criterion.Main as C
 import qualified Data.Array.IO as IOA
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Primitive.Mutable as PMV
+import qualified Data.Vector.Storable.Mutable as SMV
 import qualified Data.Vector.Unboxed.Mutable as UMV
 
 -- import qualified Data.Array.Prim.Generic as GA
@@ -56,6 +57,12 @@ benchmarks = [
     , withPMV $ \a -> C.bench "PMV.write" (C.whnfIO (PMV.write a 1 2))
     , withPMV $ \a -> C.bench "PMV.unsafeWrite" (C.whnfIO (PMV.unsafeWrite a 1 2))
     ],
+  C.bgroup "Storable Mutable Vector of Int" [
+    withSMV $ \a -> C.bench "SMV.read" (C.whnfIO (SMV.read a 2))
+    , withSMV $ \a -> C.bench "SMV.unsafeRead" (C.whnfIO (SMV.unsafeRead a 2))
+    , withSMV $ \a -> C.bench "SMV.write" (C.whnfIO (SMV.write a 1 2))
+    , withSMV $ \a -> C.bench "SMV.unsafeWrite" (C.whnfIO (SMV.unsafeWrite a 1 2))
+    ],
   C.bgroup "Unboxed Mutable Vector of Int" [
     withUMV $ \a -> C.bench "UMV.read" (C.whnfIO (UMV.read a 2))
     , withUMV $ \a -> C.bench "UMV.unsafeRead" (C.whnfIO (UMV.unsafeRead a 2))
@@ -78,6 +85,9 @@ withMV = C.env (MV.replicate 100 0)
 
 withPMV :: (PMV.IOVector Int -> C.Benchmark) -> C.Benchmark
 withPMV = C.env (PMV.replicate 100 0)
+
+withSMV :: (SMV.IOVector Int -> C.Benchmark) -> C.Benchmark
+withSMV = C.env (SMV.replicate 100 0)
 
 withUMV :: (UMV.IOVector Int -> C.Benchmark) -> C.Benchmark
 withUMV = C.env (UMV.replicate 100 0)
