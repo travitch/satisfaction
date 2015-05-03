@@ -2,7 +2,7 @@
 -- | Conflict analysis based on the first UIP heuristic
 --
 -- See Note [First UIP] for details.
-module Satisfaction.Internal.AnalyzeConflict (
+module Satisfaction.CDCL.AnalyzeConflict (
   Conflict(..),
   analyzeConflict
   ) where
@@ -12,15 +12,16 @@ import qualified Data.Array.Traverse as AT
 import qualified Data.Array.Vector as V
 import qualified Data.Ref.Prim as P
 
-import qualified Satisfaction.CNF as C
-import qualified Satisfaction.Internal.Literal as L
-import Satisfaction.Internal.Monad
+import qualified Satisfaction.CDCL.Clause as CL
+import qualified Satisfaction.CDCL.Core as C
+import Satisfaction.CDCL.Monad
+import qualified Satisfaction.Formula.Literal as L
 import qualified Satisfaction.Internal.Debug as D
 
 -- | A description of a conflict that tells us what conflict clause we
 -- should learn.
 data Conflict = Conflict { cAssertingLit :: !L.Literal
-                         , cLearnedClause :: !C.Clause
+                         , cOtherLits :: [L.Literal]
                          , cBacktrackLevel :: !Int
                          }
 
@@ -28,64 +29,62 @@ data Conflict = Conflict { cAssertingLit :: !L.Literal
 --
 -- Calls the given continuation with the literal to assert, the clause
 -- to learn, and the decision level to backtrack to.
-analyzeConflict :: (Conflict -> Solver a) -> ClauseRef -> Solver a
-analyzeConflict k clauseNum = do
+analyzeConflict :: (Conflict -> Solver a) -> CL.Clause Solver -> Solver a
+analyzeConflict k conflictClause = do
   e <- ask
   P.modifyRef' (eCurrentConflicts e) (+1)
   nAssignments <- V.size (eDecisionStack e)
   clearSeenMarkers
-  conflictClause <- clauseAt clauseNum
-  bumpClauseActivity clauseNum
+  C.bumpClauseActivity conflictClause
   withFalseLiterals conflictClause 0 0 [] $ \nodesToUIP maxLevel learnt -> do
-    withNextConflictLit (nAssignments - 1) $ \p conflIndex assignmentIndex -> do
-      liftIO $ D.traceIO ("  [ac] Entering conflict analysis loop with clause at " ++ show conflIndex)
-      go p conflIndex assignmentIndex (nodesToUIP - 1) maxLevel learnt
+    withNextConflictLit (nAssignments - 1) $ \p confl assignmentIndex -> do
+--      liftIO $ D.traceIO ("  [ac] Entering conflict analysis loop with clause at " ++ show conflIndex)
+      go p confl assignmentIndex (nodesToUIP - 1) maxLevel learnt
   where
     -- The conflict analysis loop.
     --
     -- See Note [Conflict Analysis State]
-    go p conflIndex assignmentIndex nodesToUIP maxLevel learnt
+    go p mConfl assignmentIndex nodesToUIP maxLevel learnt
       | nodesToUIP <= 0 = do
           let p' = L.neg p
-              cl = C.clause p' learnt
-          case C.clauseIsSingleton cl of
-            False -> do
-              liftIO $ D.traceIO ("  [ac] Calling the conflict continuation with " ++ show cl ++ " and max level " ++ show maxLevel)
+          case learnt of
+            [] -> do
+              liftIO $ D.traceIO ("  [ac] Calling conflict continuation with unit clause " ++ show [p'])
               k Conflict { cAssertingLit = p'
-                         , cLearnedClause = cl
-                         , cBacktrackLevel = maxLevel
-                         }
-            True -> do
-              liftIO $ D.traceIO ("  [ac] Calling conflict continuation with unit clause " ++ show cl)
-              k Conflict { cAssertingLit = p'
-                         , cLearnedClause = cl
+                         , cOtherLits = []
                          , cBacktrackLevel = 0
                          }
-      | otherwise = do
-          confl <- clauseAt conflIndex
-          bumpClauseActivity conflIndex
-          liftIO $ D.traceIO ("  [ac] Expanding reason for " ++ show p ++ " in conflict clause " ++ show confl)
+            _ -> do
+              liftIO $ D.traceIO ("  [ac] Calling the conflict continuation with " ++ show (p':learnt) ++ " and max level " ++ show maxLevel)
+              k Conflict { cAssertingLit = p'
+                         , cOtherLits = learnt
+                         , cBacktrackLevel = maxLevel
+                         }
+      | Just confl <- mConfl = do
+          C.bumpClauseActivity confl
+          liftIO $ D.traceIO ("  [ac] Expanding reason for " ++ show p ++ " in conflict clause")
           withFalseLiterals confl nodesToUIP maxLevel learnt $ \nodesToUIP' maxLevel' learnt' -> do
-            withNextConflictLit assignmentIndex $ \p' conflIndex' assignmentIndex' -> do
+            withNextConflictLit assignmentIndex $ \p' confl' assignmentIndex' -> do
               liftIO $ D.traceIO ("  [ac] Inspecting conflict lit " ++ show p)
               liftIO $ D.traceIO ("  [ac] Kicking off another loop iteration with counter " ++ show (nodesToUIP' - 1))
-              go p' conflIndex' assignmentIndex' (nodesToUIP' - 1) maxLevel' learnt'
-{-# INLINE analyzeConflict #-}
+              go p' confl' assignmentIndex' (nodesToUIP' - 1) maxLevel' learnt'
+      | otherwise = error "Got an unexpected empty conflict clause while searching for a UIP"
 
-withFalseLiterals :: C.Clause -- ^ The conflict clause
+withFalseLiterals :: CL.Clause Solver -- ^ The conflict clause
                   -> Int -- ^ The UIP counter
                   -> Int -- ^ The decision level to backtrack to
                   -> [L.Literal] -- ^ Literals comprising the learned clause
                   -> (Int -> Int -> [L.Literal] -> Solver a) -- ^ Continuation with updated values of the counter, dl, and learned literals
                   -> Solver a
-withFalseLiterals conflictClause nodesToUIP0 maxLevel0 learnt0 kDone =
-  go (C.clauseSize conflictClause - 1) nodesToUIP0 maxLevel0 learnt0
+withFalseLiterals conflictClause nodesToUIP0 maxLevel0 learnt0 kDone = do
+  nLits <- CL.literalCount conflictClause
+  go (nLits - 1) nodesToUIP0 maxLevel0 learnt0
   where
     go !ix nodesToUIP maxLevel learnt
       | ix < 0 = kDone nodesToUIP maxLevel learnt
       | otherwise = do
-          let lit = C.clauseLiteral conflictClause ix
-          val <- literalValue lit
+          lit <- CL.unsafeReadLiteral conflictClause ix
+          val <- C.literalValue lit
           case val == L.liftedFalse of
             False -> go (ix - 1) nodesToUIP maxLevel learnt
             True -> processReason lit (ix - 1) nodesToUIP maxLevel learnt
@@ -106,13 +105,13 @@ withFalseLiterals conflictClause nodesToUIP0 maxLevel0 learnt0 kDone =
           -- Otherwise, it was assigned at a lower level and we want
           -- it to be part of our learned clause (ignoring dl == 0)
           GA.unsafeWriteArray (eSeen e) var 1
-          bumpVariableActivity var
+          C.bumpVariableActivity var
           case varAssignedAtLevel of
             _ | varAssignedAtLevel >= dl -> do
                   liftIO $ D.traceIO (" [wfl] Skipping lit " ++ show lit ++ " because it was assigned at dl " ++ show varAssignedAtLevel)
                   go ix (nodesToUIP + 1) maxLevel learnt
               | otherwise -> do
-                  liftIO $ D.traceIO (" [wfl] lit " ++ show lit ++ " assigned at " ++ show varAssignedAtLevel ++ " in clause " ++ show conflictClause)
+                  liftIO $ D.traceIO (" [wfl] lit " ++ show lit ++ " assigned at " ++ show varAssignedAtLevel ++ " in clause ") --  ++ show conflictClause)
                   let maxLevel' = max maxLevel varAssignedAtLevel
                       learnt' = lit : learnt
                   go ix nodesToUIP maxLevel' learnt'
@@ -124,7 +123,7 @@ withFalseLiterals conflictClause nodesToUIP0 maxLevel0 learnt0 kDone =
 --
 -- It cannot be the case that there are no decisions here, hence
 -- the unsafe read.
-withNextConflictLit :: Int -> (L.Literal -> ClauseRef -> Int -> Solver a) -> Solver a
+withNextConflictLit :: Int -> (L.Literal -> Maybe (CL.Clause Solver) -> Int -> Solver a) -> Solver a
 withNextConflictLit lastLitIndex kLit = go lastLitIndex
   where
     go ix = do
@@ -137,12 +136,16 @@ withNextConflictLit lastLitIndex kLit = go lastLitIndex
           liftIO $ D.traceIO ("      [WNCL] Skipping (unmarked) " ++ show lastLit)
           go (ix - 1)
         True -> do
-          conflictIndex <- GA.unsafeReadArray (eDecisionReasons e) (L.var lastLit)
+          -- Note that the returned conflict clause here might be
+          -- Nothing.  This means that the search in 'analyzeConflict'
+          -- is done and we will end up taking the @nodesToUIP <= 0@
+          -- branch.
+          mConflict <- GA.unsafeReadArray (eDecisionReasons e) (L.var lastLit)
           reasonLevel <- GA.unsafeReadArray (eVarLevels e) (L.var lastLit)
           liftIO $ D.traceIO ("    [WNCL] Last lit was assigned at dl " ++ show reasonLevel)
-          liftIO $ D.traceIO ("    [WNCL] Conflict index is " ++ show conflictIndex)
+--          liftIO $ D.traceIO ("    [WNCL] Conflict index is " ++ show conflictIndex)
           liftIO $ D.traceIO ("      [WNCL] Calling kLit")
-          kLit lastLit conflictIndex (ix - 1)
+          kLit lastLit mConflict (ix - 1)
 {-# INLINE withNextConflictLit #-}
 
 -- The seen array is a bitvector marking which literals we have

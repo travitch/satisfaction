@@ -1,8 +1,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
 module Data.Array.Prim.Generic (
   PrimArray(..),
-  PrimMArray(..)
+  PrimMArray(..),
+  ArrayBacked(..),
+  Sized(..)
   ) where
 
 import Control.Monad.Prim
@@ -21,11 +24,19 @@ class PrimArray a e where
 class PrimMArray a e where
   newArray :: (PrimMonad m, IxZero i) => Int -> e -> m (a m i e)
   newArray_ :: (PrimMonad m, IxZero i) => Int -> m (a m i e)
-  size :: (PrimMonad m) => a m i e -> m Int
   readArray :: (PrimMonad m, IxZero i) => a m i e -> i -> m e
   unsafeReadArray :: (PrimMonad m, IxZero i) => a m i e -> i -> m e
   writeArray :: (PrimMonad m, IxZero i) => a m i e -> i -> e -> m ()
   unsafeWriteArray :: (PrimMonad m, IxZero i) => a m i e -> i -> e -> m ()
+
+class ArrayBacked a e where
+  withBackingArray :: (PrimMonad m)
+                   => a m i e
+                   -> (forall arr . (PrimMArray arr e) => arr m i e -> m b)
+                   -> m b
+
+class Sized a e where
+  size :: (PrimMonad m) => a m i e -> m Int
 
 instance PrimArray PA.Array e where
   {-# INLINE elems #-}
@@ -48,29 +59,37 @@ instance (PUA.Unbox e) => PrimArray PUA.Array e where
   plength a = PUA.size a
 
 instance PrimMArray PMA.MArray e where
-  {-# INLINE size #-}
   {-# INLINE readArray #-}
   {-# INLINE writeArray #-}
   {-# INLINE unsafeReadArray #-}
   {-# INLINE unsafeWriteArray #-}
   newArray n e = PMA.newArray n e
   newArray_ n = PMA.newArray_ n
-  size a = PMA.size a
   readArray a ix = PMA.readArray a ix
   unsafeReadArray a ix = PMA.unsafeReadArray a ix
   writeArray a ix elt = PMA.writeArray a ix elt
   unsafeWriteArray a ix elt = PMA.unsafeWriteArray a ix elt
 
+instance ArrayBacked PMA.MArray e where
+  withBackingArray a f = f a
+
+instance Sized PMA.MArray e where
+  size = PMA.size
+
 instance (PUMA.Unbox e) => PrimMArray PUMA.MArray e where
-  {-# INLINE size #-}
   {-# INLINE readArray #-}
   {-# INLINE writeArray #-}
   {-# INLINE unsafeReadArray #-}
   {-# INLINE unsafeWriteArray #-}
   newArray n e = PUMA.newArray n e
   newArray_ n = PUMA.newArray_ n
-  size a = PUMA.size a
   readArray a ix = PUMA.readArray a ix
   unsafeReadArray a ix = PUMA.unsafeReadArray a ix
   writeArray a ix elt = PUMA.writeArray a ix elt
   unsafeWriteArray a ix elt = PUMA.unsafeWriteArray a ix elt
+
+instance (PUMA.Unbox e) => ArrayBacked PUMA.MArray e where
+  withBackingArray a f = f a
+
+instance Sized PUMA.MArray e where
+  size = PUMA.size

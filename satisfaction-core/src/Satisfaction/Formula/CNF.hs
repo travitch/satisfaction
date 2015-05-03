@@ -3,7 +3,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE ViewPatterns #-}
-module Satisfaction.CNF (
+module Satisfaction.Formula.CNF (
   -- * Internal representation
   CNF,
   Clause,
@@ -31,7 +31,8 @@ import qualified Data.Array.Prim.Unboxed as PUA
 import qualified Data.Map as M
 import qualified Data.Set as S
 
-import Satisfaction.Internal.Literal
+import Satisfaction.Formula
+import Satisfaction.Formula.Literal
 
 newtype Clause = MkClause { clauseAsArray :: PUA.Array Int Literal }
                deriving (Eq, Ord, Show)

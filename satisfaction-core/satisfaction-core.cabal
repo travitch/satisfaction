@@ -19,29 +19,34 @@ flag trace
 
 library
   exposed-modules: Satisfaction
-                   Satisfaction.CNF
-                   Satisfaction.Internal.AnalyzeConflict
+                   Satisfaction.Formula
+                   Satisfaction.Formula.CNF
+                   Satisfaction.Formula.Literal
+                   Satisfaction.CDCL
+                   Satisfaction.CDCL.AnalyzeConflict
+                   Satisfaction.CDCL.Clause
+                   Satisfaction.CDCL.Core
+                   Satisfaction.CDCL.Monad
+                   Satisfaction.CDCL.Simplify
+                   Satisfaction.CDCL.Solver
+                   Satisfaction.CDCL.Statistics
+                   Satisfaction.CDCL.UnitPropagation
                    Satisfaction.Internal.Debug
-                   Satisfaction.Internal.Literal
-                   Satisfaction.Internal.Monad
-                   Satisfaction.Internal.Simplify
-                   Satisfaction.Internal.Solver
-                   Satisfaction.Internal.UnitPropagation
                    Control.Monad.Prim
                    Data.Array.Dynamic
                    Data.Array.Heap
                    Data.Array.Prim
+                   Data.Array.Prim.Internal
                    Data.Array.Prim.Generic
                    Data.Array.Prim.Mutable
                    Data.Array.Prim.Unboxed
+                   Data.Array.Prim.Unboxed.Internal
                    Data.Array.Prim.Unboxed.Mutable
                    Data.Array.Traverse
                    Data.Array.Vector
                    Data.Ref.Prim
                    Data.Ix.Zero
                    Data.Unbox
-  other-modules: Data.Array.Prim.Internal
-                 Data.Array.Prim.Unboxed.Internal
   build-depends: base >= 4.6 && < 5,
                  containers >= 0.5 && < 0.6
   hs-source-dirs: src
@@ -66,7 +71,7 @@ test-suite satisfaction-tests
                  transformers,
                  filemanip >= 0.3.5 && < 0.4,
                  parse-dimacs >= 1.3 && < 2,
-                 tasty >= 0.10 && < 0.11,
+                 tasty >= 0.10 && < 0.12,
                  tasty-hunit >= 0.9 && < 0.10,
                  tasty-quickcheck >= 0.8 && < 0.9,
                  QuickCheck
@@ -81,5 +86,5 @@ benchmark satisfaction-bench
                  base,
                  deepseq,
                  array >= 0.4 && < 0.6,
-                 vector >= 0.10 && < 0.11,
+                 vector >= 0.10 && < 0.12,
                  criterion >= 1 && < 1.2

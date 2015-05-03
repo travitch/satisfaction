@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -30,14 +31,20 @@ instance (GA.PrimMArray a e) => GA.PrimMArray (DArray a) e where
   {-# INLINE writeArray #-}
   {-# INLINE unsafeReadArray #-}
   {-# INLINE unsafeWriteArray #-}
-  {-# INLINE size #-}
   newArray_ n = newArray_ n
   newArray n e = newArray n e
   readArray a ix = readArray a ix
   writeArray a ix elt = writeArray a ix elt
   unsafeReadArray a ix = unsafeReadArray a ix
   unsafeWriteArray a ix elt = unsafeWriteArray a ix elt
+
+instance (GA.Sized a e) => GA.Sized (DArray a) e where
   size a = size a
+
+instance (GA.ArrayBacked a e) => GA.ArrayBacked (DArray a) e where
+  withBackingArray da f = do
+    a <- readRef (daArray da)
+    GA.withBackingArray a f
 
 -- | Allocate a new array, reserving the given amount of storage
 newArray_ :: (PrimMonad m, GA.PrimMArray a e, IxZero i) => Int -> m (DArray a m i e)
@@ -78,7 +85,7 @@ unsafeWriteArray da i e = do
   GA.unsafeWriteArray a i e
 {-# INLINE unsafeWriteArray #-}
 
-size :: (PrimMonad m, GA.PrimMArray a e) => DArray a m i e -> m Int
+size :: (PrimMonad m, GA.Sized a e) => DArray a m i e -> m Int
 size da = do
   a <- readRef (daArray da)
   GA.size a
@@ -88,7 +95,7 @@ size da = do
 --
 -- The values at the new indexes are undefined.  Values at the old
 -- indexes remain the same.
-grow :: (PrimMonad m, GA.PrimMArray a e, IxZero i) => DArray a m i e -> Int -> m ()
+grow :: (PrimMonad m, GA.PrimMArray a e, IxZero i, GA.Sized a e) => DArray a m i e -> Int -> m ()
 grow da newSize = do
   oldSize <- size da
   case newSize > oldSize of

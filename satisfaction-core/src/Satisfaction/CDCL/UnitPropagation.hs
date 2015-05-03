@@ -1,19 +1,19 @@
 {-# LANGUAGE FlexibleContexts #-}
 -- | Functions for unit propagation using two-watched literals
-module Satisfaction.Internal.UnitPropagation (
+module Satisfaction.CDCL.UnitPropagation (
   withQueuedDecision,
   updateWatchlists
   ) where
 
 import qualified Data.Array.Prim.Generic as GA
-import Data.Bits ( shiftL )
 import qualified Data.Ref.Prim as P
 
 import qualified Data.Array.Vector as V
-import qualified Satisfaction.CNF as C
-import qualified Satisfaction.Internal.Literal as L
+import qualified Satisfaction.CDCL.Clause as CL
+import qualified Satisfaction.CDCL.Core as C
+import Satisfaction.CDCL.Monad
+import qualified Satisfaction.Formula.Literal as L
 import qualified Satisfaction.Internal.Debug as D
-import Satisfaction.Internal.Monad
 
 -- | For the next 'Literal' that has been decided in the queue, call
 -- the given continuation.  If there are no more literals in the
@@ -65,7 +65,7 @@ withQueuedDecision kEmpty kProp = do
 -- we don't backtrack the decision, it doesn't matter because the
 -- clause is satisfied.
 updateWatchlists :: L.Literal -- ^ Literal causing the update
-                 -> (ClauseRef -> Solver a) -- ^ Continuation on a conflicting assignment
+                 -> (CL.Clause Solver -> Solver a) -- ^ Continuation on a conflicting assignment
                  -> Solver a -- ^ Unsat continuation
                  -> Solver a -- ^ Continuation on successful watchlist update
                  -> Solver a
@@ -73,15 +73,16 @@ updateWatchlists l kConflict kUnsat kNext = do
   e <- ask
   P.modifyRef' (ePropagations e) (+1)
   clausesWatching <- GA.unsafeReadArray (eClausesWatchingLiteral e) falseLit
-  go clausesWatching 0
+  dl <- getDecisionLevel
+  go dl clausesWatching 0
   where
     falseLit = L.neg l
     -- This is invoked if we can't find another literal to watch.
     -- This means that the clause is unit and we can try to satisfy it
     -- by satisfying the remaining variable.
-    kUnit clauseNum otherLit watchers ix = do
-      liftIO $ D.traceIO ("      [uw] Clause is unit: " ++ show clauseNum)
-      val <- literalValue otherLit
+    kUnit dl cl otherLit watchers ix = do
+      liftIO $ D.traceIO ("      [uw] Clause is unit at index: " ++ show ix)
+      val <- C.literalValue otherLit
       -- If the other literal is unassigned, we can assign it (and
       -- implicitly enqueue it to propagate units).  It cannot be
       -- True, because we handle that in a case of 'go' (see the
@@ -91,20 +92,19 @@ updateWatchlists l kConflict kUnsat kNext = do
       -- We can get a conflict (despite watchlist tracking) if we made
       -- an assignment that cause a conflict, but the conflicting
       -- update is in the queue and not processed yet.
-      dl <- getDecisionLevel
       case () of
         _ | L.isUnassigned val -> do
               liftIO $ D.traceIO ("    [uw] Asserting a literal during watchlist update: " ++ show otherLit)
-              assertLiteral otherLit clauseNum
-              go watchers (ix + 1)
+              C.assertLiteral otherLit (Just cl)
+              go dl watchers (ix + 1)
           | dl <= 0 -> do
               liftIO $ D.traceIO ("    [uw] Deriving unsat in updateWatchlists")
               kUnsat
           | otherwise -> do
               clearPropagationQueue
               liftIO $ D.traceIO ("    [uw] Encountered a unit conflict due to " ++ show otherLit ++ ", which is assigned " ++ show val)
-              kConflict clauseNum
-    go watchers ix = do
+              kConflict cl
+    go dl watchers ix = do
       sz <- V.size watchers
       case ix < sz of
         False -> do
@@ -113,84 +113,68 @@ updateWatchlists l kConflict kUnsat kNext = do
           -- watches
           kNext
         True -> do
-          clauseNum <- V.unsafeReadVector watchers ix
-          cl <- clauseAt clauseNum
-          liftIO $ D.traceIO ("  [uw] Updating watches for clause " ++ show clauseNum ++ ": " ++ show cl)
-          e <- ask
-          otherLit <- normalizeWatchedLiterals clauseNum falseLit
+          cl <- V.unsafeReadVector watchers ix
+          liftIO $ D.traceIO ("  [uw] Updating watches for clause at index: " ++ show ix)
+          otherLit <- normalizeWatchedLiterals cl falseLit
           -- falseLit is @¬l@ and known to be false.  It is at the
           -- given index.  We have to check to see if the other lit
           -- is true; if so, this clause is satisfied and we don't
           -- need to update anything.
-          otherVal <- literalValue otherLit
+          otherVal <- C.literalValue otherLit
           case otherVal == L.liftedTrue of
             True -> do
               -- The clause is satisfied, so we don't need to change our watches at all.
               liftIO $ D.traceIO "      [uw] Satisfied clause"
-              go watchers (ix + 1)
+              go dl watchers (ix + 1)
             False -> do
               -- Find a new lit to watch instead of falseLit.  If
               -- this succeeds, we need to remove the clause at @ix@
               -- (which is @clauseNum@) and add @clauseNum@ to the appropriate list
-              let whenUnit = kUnit clauseNum otherLit watchers ix
-              withTrueOrUnassignedLiteral whenUnit cl otherLit $ \newWatchedLit -> do
+              let whenUnit = kUnit dl cl otherLit watchers ix
+              withTrueOrUnassignedLiteral whenUnit cl $ \newWatchedLitIdx newWatchedLit -> do
+                clausesWatchingLiteral <- asks eClausesWatchingLiteral
                 liftIO $ D.traceIO ("    [uw] Now watching " ++ show newWatchedLit)
-                GA.unsafeWriteArray (eWatchedLiterals e) (2 * clauseNum + 1) newWatchedLit
-                V.removeElement watchers ix
-                watchingLit <- GA.unsafeReadArray (eClausesWatchingLiteral e) newWatchedLit
-                V.push watchingLit clauseNum
+                CL.unsafeSwapLiterals cl 1 newWatchedLitIdx
+                V.unsafeRemoveElement watchers ix
+                newWatches <- GA.unsafeReadArray clausesWatchingLiteral newWatchedLit
+                V.push newWatches cl
                 -- We don't increment @ix@ because we removed the
                 -- element that was at @ix@ and replaced it with a
                 -- new one, so we need to check ix again.
-                go watchers ix
-{-# INLINE updateWatchlists #-}
+                go dl watchers ix
 
--- | Place the literal we are updating (the one known to be false due
--- to unit propagation) into the second watched literal slot.  We'll
--- implicitly know to update this one in 'updateWatchlists'.
---
--- The other literal is in the first watched literal slot, and is
--- returned here.  In 'updateWatchlists', we can return if that
--- literal is already True.
-normalizeWatchedLiterals :: ClauseRef -> L.Literal -> Solver L.Literal
-normalizeWatchedLiterals clauseRef falseLit = do
-  e <- ask
-  let watches = eWatchedLiterals e
-  watch1 <- GA.unsafeReadArray watches watch1Ix
-  watch2 <- GA.unsafeReadArray watches watch2Ix
-  case watch2 == falseLit of
-    True -> return watch1
+-- | Re-arrange the watched literals in the clause such that the False
+-- literal (i.e., the one that needs to be changed) is first.  Return
+-- the other literal.
+normalizeWatchedLiterals :: CL.Clause Solver -> L.Literal -> Solver L.Literal
+normalizeWatchedLiterals cl falseLit = do
+  l0 <- CL.unsafeReadLiteral cl 0
+  l1 <- CL.unsafeReadLiteral cl 1
+  case l1 == falseLit of
+    True -> return l0
     False -> do
-      GA.unsafeWriteArray watches watch1Ix watch2
-      GA.unsafeWriteArray watches watch2Ix watch1
-      return watch2
-  where
-    watch1Ix = clauseRef `shiftL` 1
-    watch2Ix = watch1Ix + 1
-{-# INLINE normalizeWatchedLiterals #-}
+      CL.unsafeSwapLiterals cl 0 1
+      return l1
 
 -- | Find a new literal that is either satisfied or unassigned in the given clause.
 --
 -- If there is no such literal, call the conflict continuation.
 withTrueOrUnassignedLiteral :: Solver a -- ^ Continuation for the case we can't find a new literal to watch
-                            -> C.Clause -- ^ The clause to search
-                            -> L.Literal -- ^ The literal we don't want to choose (because we are already watching it)
-                            -> (L.Literal -> Solver a) -- ^ The continuation to call with the new literal
+                            -> CL.Clause Solver -- ^ The clause to search
+                            -> (Int -> L.Literal -> Solver a) -- ^ The continuation to call with the new literal
                             -> Solver a
-withTrueOrUnassignedLiteral kConflict clause ignoreLit withLit = go 0
+withTrueOrUnassignedLiteral kConflict clause withLit = do
+  sz <- CL.literalCount clause
+  go 2 sz
   where
-    sz = C.clauseSize clause
-    go ix | ix >= sz = kConflict
-          | otherwise = do
-              let l = clause `C.clauseLiteral` ix
-              case l == ignoreLit of
-                True -> go (ix + 1)
-                False -> do
-                  lv <- literalValue l
-                  case lv == L.liftedFalse of
-                    False -> withLit l
-                    True -> go (ix + 1)
-{-# INLINE withTrueOrUnassignedLiteral #-}
+    go ix sz
+      | ix >= sz = kConflict
+      | otherwise = do
+          l <- CL.unsafeReadLiteral clause ix
+          lv <- C.literalValue l
+          case lv == L.liftedFalse of
+            False -> withLit ix l
+            True -> go (ix + 1) sz
 
 -- | Clear the propagation queue.
 --

@@ -2,9 +2,9 @@
 {-# LANGUAGE UnboxedTuples #-}
 -- | This module defines the primitive types used to talk about
 -- variables.  See Note [Representation]
-module Satisfaction.Internal.Literal (
+module Satisfaction.Formula.Literal (
   -- * Literals
-  Literal,
+  Literal(..),
   neg,
   var,
   isNegated,

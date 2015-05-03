@@ -66,7 +66,7 @@ member h elt = do
 {-# INLINE member #-}
 
 -- | Insert an element into the heap, growing if necessary
-insert :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
+insert :: (PrimMonad m, GA.PrimMArray a e, IxZero e, GA.Sized a e) => Heap a m e -> e -> m ()
 insert h elt = do
   ensureStorage h elt
   unsafeInsert h elt
@@ -224,7 +224,7 @@ null h = (==0) <$> size h
 -- index array.  Since we start with that invariant satisfied at
 -- construction time, we only need to enlarge either array if the new
 -- element is outside of the range of the current index array.
-ensureStorage :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> m ()
+ensureStorage :: (PrimMonad m, GA.PrimMArray a e, IxZero e, GA.Sized a e) => Heap a m e -> e -> m ()
 ensureStorage h elt = do
   curSize <- DA.size (hIndices h)
   unless (zix < curSize) $ do

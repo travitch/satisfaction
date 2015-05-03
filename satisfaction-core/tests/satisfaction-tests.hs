@@ -18,7 +18,9 @@ import qualified Test.Tasty.HUnit as T
 
 import qualified Data.Array.Heap as H
 
-import qualified Satisfaction as S
+import qualified Satisfaction.CDCL as S
+import qualified Satisfaction.CDCL.Clause as C
+import qualified Satisfaction.Formula.Literal as L
 
 main :: IO ()
 main = do
@@ -29,6 +31,7 @@ main = do
     heapTests1 "BoxedHeapTests1" allocateBoxedHeap,
     heapTests2 "UnboxedHeapTests2" allocateUnboxedHeap,
     heapTests2 "BoxedHeapTests2" allocateBoxedHeap,
+    clauseTests,
     dimacsTests "SatTests" satTests expectSatisfiable,
     dimacsTests "UnsatTests" unsatTests expectUnsatisfiable
     ]
@@ -128,4 +131,70 @@ heapTests2 name allocator = QC.testProperty name $ MQC.monadicIO $ do
   mfromHeap <- liftIO $ H.takeMin h
   MQC.assert (mfromHeap == Nothing)
 
+-- Test the implementation of Clauses to ensure that all of the
+-- manually-specified offsets are correct.
+clauseTests :: T.TestTree
+clauseTests = T.testGroup "clauseTests" [
+  testClauseMetadata
+  ]
+
+testClauseMetadata :: T.TestTree
+testClauseMetadata = T.testCase "clauseMetadata" $ do
+  let activity = 3.4
+      lits0 = [ L.MkLiteral 5, L.MkLiteral 10, L.MkLiteral 0 ]
+  c <- C.new activity lits0
+  act0 <- C.readActivity c
+  nLits0 <- C.literalCount c
+  isLearned0 <- C.readIsLearned c
+  T.assertEqual "Expected activity" activity act0
+  T.assertEqual "Expected literal count" (length lits0) nLits0
+  T.assertEqual "Expected initial flags" False isLearned0
+
+  F.forM_ [0..length lits0 - 1] $ \ix -> do
+    lit <- C.readLiteral c ix
+    T.assertEqual "Expected literal" (lits0 !! ix) lit
+
+  -- Now perform some updates to ensure we aren't clobbering expected values
+  let activity1 = 11.4
+  C.writeActivity c activity1
+  act1 <- C.readActivity c
+  nLits1 <- C.literalCount c
+  isLearned1 <- C.readIsLearned c
+  T.assertEqual "Expected activity" activity1 act1
+  T.assertEqual "Expected literal count" (length lits0) nLits1
+  T.assertEqual "Expected initial flags" False isLearned1
+
+  F.forM_ [0..length lits0 - 1] $ \ix -> do
+    lit <- C.readLiteral c ix
+    T.assertEqual "Expected literal" (lits0 !! ix) lit
+
+  -- Set learned
+  C.setLearnedFlag c
+  act2 <- C.readActivity c
+  nLits2 <- C.literalCount c
+  isLearned2 <- C.readIsLearned c
+  T.assertEqual "Expected activity" activity1 act2
+  T.assertEqual "Expected literal count" (length lits0) nLits2
+  T.assertEqual "Expected initial flags" True isLearned2
+
+  F.forM_ [0..length lits0 - 1] $ \ix -> do
+    lit <- C.readLiteral c ix
+    T.assertEqual "Expected literal" (lits0 !! ix) lit
+
+  -- Swap two variables to make sure it doesn't clobber metadata
+  l0 <- C.readLiteral c 0
+  l2 <- C.readLiteral c 2
+  C.writeLiteral c 0 l2
+  C.writeLiteral c 2 l0
+  act3 <- C.readActivity c
+  nLits3 <- C.literalCount c
+  isLearned3 <- C.readIsLearned c
+  T.assertEqual "Expected activity" activity1 act3
+  T.assertEqual "Expected literal count" (length lits0) nLits3
+  T.assertEqual "Expected initial flags" True isLearned3
+
+  let exLits2 = [lits0 !! 2, lits0 !! 1, lits0 !! 0]
+  F.forM_ [0..length lits0 - 1] $ \ix -> do
+    lit <- C.readLiteral c ix
+    T.assertEqual "Expected literal" (exLits2 !! ix) lit
 

@@ -38,35 +38,35 @@ forArrayM_ a f =
                 | otherwise = return ()
 {-# INLINE forArrayM_ #-}
 
-forMArray_ :: (G.PrimMArray a e, P.PrimMonad m, IxZero i)
+forMArray_ :: (P.PrimMonad m, IxZero i, G.ArrayBacked a e, G.Sized a e)
            => a m i e
            -> (i -> e -> m ())
            -> m ()
 forMArray_ a f = do
   sz <- G.size a
-  go 0 sz
+  G.withBackingArray a (go 0 sz)
   where
-    go cur sz | cur >= sz = return ()
-              | otherwise = do
-                  let i = fromZeroIndex cur
-                  elt <- G.unsafeReadArray a i
-                  f i elt
-                  go (cur + 1) sz
+    go cur sz a' | cur >= sz = return ()
+                 | otherwise = do
+                     let i = fromZeroIndex cur
+                     elt <- G.unsafeReadArray a' i
+                     f i elt
+                     go (cur + 1) sz a'
 {-# INLINE forMArray_ #-}
 
-foldMArray :: (G.PrimMArray a e, P.PrimMonad m, IxZero i)
+foldMArray :: (P.PrimMonad m, IxZero i, G.Sized a e, G.ArrayBacked a e)
            => a m i e
            -> s
            -> (i -> e -> s -> m s)
            -> m s
 foldMArray a seed f = do
   sz <- G.size a
-  go 0 seed sz
+  G.withBackingArray a (go 0 seed sz)
   where
-    go cur val sz | cur >= sz = return val
-                  | otherwise = do
-                      let i = fromZeroIndex cur
-                      elt <- G.unsafeReadArray a i
-                      val' <- f i elt val
-                      go (cur + 1) val' sz
+    go cur val sz arr | cur >= sz = return val
+                      | otherwise = do
+                          let i = fromZeroIndex cur
+                          elt <- G.unsafeReadArray arr i
+                          val' <- f i elt val
+                          go (cur + 1) val' sz arr
 {-# INLINE foldMArray #-}

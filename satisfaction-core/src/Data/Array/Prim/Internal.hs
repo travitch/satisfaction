@@ -7,6 +7,6 @@ module Data.Array.Prim.Internal (
 import GHC.Exts
 import Control.Monad.Prim
 
-data Array i a = Array { unArray :: Array# a }
+data Array i e = Array { unArray :: Array# e }
 
-data MArray m i a = MArray { unMArray :: MutableArray# (PrimState m) a }
+data MArray m i e = MArray { unMArray :: MutableArray# (PrimState m) e }

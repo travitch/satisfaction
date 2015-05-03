@@ -1,6 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RankNTypes #-}
-module Satisfaction.Internal.Solver (
+module Satisfaction.CDCL.Solver (
   solve,
   solveWith,
   nextSolution,
@@ -23,12 +23,15 @@ module Satisfaction.Internal.Solver (
 import Control.Applicative
 import qualified Data.Array.Prim.Unboxed as PUA
 
-import qualified Satisfaction.CNF as C
-import qualified Satisfaction.Internal.Literal as L
-import Satisfaction.Internal.AnalyzeConflict
-import Satisfaction.Internal.Monad
-import Satisfaction.Internal.Simplify
-import Satisfaction.Internal.UnitPropagation
+import Satisfaction.CDCL.Monad
+import qualified Satisfaction.CDCL.AnalyzeConflict as AC
+import qualified Satisfaction.CDCL.Clause as CL
+import qualified Satisfaction.CDCL.Core as C
+import qualified Satisfaction.CDCL.Simplify as SI
+import qualified Satisfaction.CDCL.Statistics as ST
+import qualified Satisfaction.CDCL.UnitPropagation as P
+import qualified Satisfaction.Formula.CNF as C
+import qualified Satisfaction.Formula.Literal as L
 import qualified Satisfaction.Internal.Debug as D
 
 import Prelude
@@ -44,14 +47,14 @@ data Model a = Model { modelFormula :: C.CNF a
 -- 'Satisfiable' with a 'Model'.
 --
 -- The solution also contains statistics gathered by the solver.
-data Solution a = Satisfiable { solutionStats :: Statistics
+data Solution a = Satisfiable { solutionStats :: ST.Statistics
                               , solutionModel :: Model a
                               }
-                | Unsatisfiable { solutionStats :: Statistics }
+                | Unsatisfiable { solutionStats :: ST.Statistics }
                 deriving (Show)
 
-data ISolution = IUnsat Statistics
-               | ISolution (PUA.Array L.Variable L.Value) Statistics
+data ISolution = IUnsat ST.Statistics
+               | ISolution (PUA.Array L.Variable L.Value) ST.Statistics
 
 -- | A default solver configuration that should be reasonable for many
 -- problems
@@ -133,12 +136,12 @@ solveWith :: Config -> C.CNF a -> IO (Solution a)
 solveWith config cnf = do
   isol <- runSolver config cnf $ \hasContradiction -> do
     case hasContradiction of
-      True -> IUnsat <$> extractStatistics
+      True -> IUnsat <$> ST.extractStatistics
       False ->
         -- Propagate units based on unit clauses (which have been added to
         -- the propagation queue during setup).  If we already have a
         -- conflict, we are done.  Otherwise, start the decision loop.
-        propagateUnits search (\_ -> IUnsat <$> extractStatistics )
+        propagateUnits search (\_ -> IUnsat <$> ST.extractStatistics)
   case isol of
     IUnsat stats -> do
       return Unsatisfiable { solutionStats = stats }
@@ -158,8 +161,8 @@ satisfyingAssignment = modelSatisfyingAssignment
 search :: Solver ISolution
 search = go
   where
-    go = decide (propagateUnits go (analyzeConflict (backtrack afterBacktrack)))
-    afterBacktrack = propagateUnits go (analyzeConflict (backtrack afterBacktrack))
+    go = decide (propagateUnits go (AC.analyzeConflict (backtrack afterBacktrack)))
+    afterBacktrack = propagateUnits go (AC.analyzeConflict (backtrack afterBacktrack))
 
 -- | Find the next solution in the search space, if any.
 nextSolution :: Solution a -> IO (Solution a)
@@ -170,7 +173,7 @@ nextSolution = undefined
 -- This needs to preserve all of the state so that we can pick up the
 -- search at the same spot.
 extractSolution :: Solver ISolution
-extractSolution = ISolution <$> extractAssignment <*> extractStatistics
+extractSolution = ISolution <$> C.extractAssignment <*> ST.extractStatistics
 
 -- | Drain the propagation queue, reassigning watched variables as
 -- needed.  If a clause has become unit (i.e., all literals are false
@@ -182,13 +185,13 @@ extractSolution = ISolution <$> extractAssignment <*> extractStatistics
 -- detect conflicts between unit clauses early before we actually do
 -- the assignment.
 propagateUnits :: Solver ISolution                -- ^ Continuation if there was no conflict after propagating
-               -> (ClauseRef -> Solver ISolution) -- ^ Continuation on conflict
+               -> (CL.Clause Solver -> Solver ISolution) -- ^ Continuation on conflict
                -> Solver ISolution
 propagateUnits kNoConflict kConflict = go
   where
-    go = withQueuedDecision kNoConflict $ \lit -> do
+    go = P.withQueuedDecision kNoConflict $ \lit -> do
       liftIO $ D.traceIO ("[pu] Propagating units affected by assignment " ++ show lit)
-      updateWatchlists lit kConflict (IUnsat <$> extractStatistics) go
+      P.updateWatchlists lit kConflict (IUnsat <$> ST.extractStatistics) go
 
 -- | Assign a value to the next unassigned 'Variable'.
 --
@@ -196,12 +199,12 @@ propagateUnits kNoConflict kConflict = go
 -- the current solver state and return it.
 decide :: Solver ISolution -> Solver ISolution
 decide kAssigned = do
-  reduceLearnedClauses
-  simplifyClauses
-  restartWith search $ withNextDecidedLiteral extractSolution $ \lit -> do
+  SI.reduceLearnedClauses
+  SI.simplifyClauses
+  C.restartWith search $ C.withNextDecidedLiteral extractSolution $ \lit -> do
     liftIO $ D.traceIO ("[d] Asserting " ++ show lit)
-    incrementDecisionLevel
-    assertLiteral lit noClause
+    C.incrementDecisionLevel
+    C.assertLiteral lit Nothing
     kAssigned
 
 -- | Backtrack (based on the current decision level)
@@ -213,26 +216,26 @@ decide kAssigned = do
 -- The conflict that caused the backtrack is given as an input so it
 -- can be analyzed; it may let us backjump more than one variable.
 backtrack :: Solver ISolution -- ^ Continuation on a successful backtrack
-          -> Conflict
+          -> AC.Conflict
           -> Solver ISolution
-backtrack kBacktracked Conflict { cAssertingLit = assertedLit
-                                , cLearnedClause = learntClause
-                                , cBacktrackLevel = btLevel
-                                } = do
-  liftIO $ D.traceIO ("[bt] Backtracking due to conflict " ++ show learntClause ++ " to " ++ show btLevel)
+backtrack kBacktracked AC.Conflict { AC.cAssertingLit = assertedLit
+                                   , AC.cOtherLits = otherLits
+                                   , AC.cBacktrackLevel = btLevel
+                                   } = do
+  liftIO $ D.traceIO ("[bt] Backtracking due to conflict " ++ show (assertedLit : otherLits) ++ " to " ++ show btLevel)
   dl <- getDecisionLevel
   case () of
     _ | dl == 0 -> do
           liftIO $ D.traceIO "[bt] Deriving unsat"
-          IUnsat <$> extractStatistics
+          IUnsat <$> ST.extractStatistics
       | otherwise -> do
           -- If we have a special root level (as in minisat), we would want to
           -- use that instead of zero
-          undoUntil btLevel
-          learnClause btLevel assertedLit learntClause
-          decayVariableActivity
-          decayClauseActivity
-          liftIO $ D.traceIO ("[bt] Learned clause " ++ show learntClause ++ " and asserted " ++ show assertedLit)
+          C.undoUntil btLevel
+          C.learnClause btLevel assertedLit otherLits
+          C.decayVariableActivity
+          C.decayClauseActivity
+          liftIO $ D.traceIO ("[bt] Learned clause " ++ show (assertedLit : otherLits) ++ " and asserted " ++ show assertedLit)
           kBacktracked
 
 {- Note [Unit Propagation]
