@@ -20,11 +20,15 @@ flag trace
 library
   exposed-modules: Satisfaction
                    Satisfaction.Formula
-                   Satisfaction.Formula.CNF
+                   Satisfaction.Formula.Internal
                    Satisfaction.Formula.Literal
+                   Satisfaction.Formula.Tseitin
                    Satisfaction.CDCL
                    Satisfaction.CDCL.AnalyzeConflict
                    Satisfaction.CDCL.Clause
+                   Satisfaction.CDCL.Constraint
+                   Satisfaction.CDCL.Constraint.Clause
+                   Satisfaction.CDCL.Constraint.Equality
                    Satisfaction.CDCL.Core
                    Satisfaction.CDCL.Monad
                    Satisfaction.CDCL.Simplify

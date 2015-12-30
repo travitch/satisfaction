@@ -120,29 +120,28 @@ rightIndex i = (i `shiftL` 1) + 2
 -- | Rebuild the heap invariant by moving the element at the given
 -- index into its proper place.
 percolateUp :: (PrimMonad m, GA.PrimMArray a e, IxZero e) => Heap a m e -> e -> Int -> m ()
-percolateUp h elt = go
+percolateUp h elt ix0 = go (hArray h) (hIndices h) (hLessThan h) ix0
   where
-    go arrIx
+    go arr indices lt arrIx
       | arrIx == 0 = do
-          GA.unsafeWriteArray (hArray h) arrIx elt
-          GA.unsafeWriteArray (hIndices h) elt arrIx
+          GA.unsafeWriteArray arr arrIx elt
+          GA.unsafeWriteArray indices elt arrIx
       | otherwise = do
-          let arr = hArray h
-              parentIx = parentIndex arrIx
+          let parentIx = parentIndex arrIx
           parentVal <- GA.unsafeReadArray arr parentIx
-          res <- hLessThan h elt parentVal
+          res <- lt elt parentVal
           case res of
             False -> do
               -- At the right place
               GA.unsafeWriteArray arr arrIx elt
-              GA.unsafeWriteArray (hIndices h) elt arrIx
+              GA.unsafeWriteArray indices elt arrIx
             True -> do
               -- Swap and recurse
               GA.unsafeWriteArray arr arrIx parentVal
-              GA.unsafeWriteArray (hIndices h) parentVal arrIx
+              GA.unsafeWriteArray indices parentVal arrIx
               GA.unsafeWriteArray arr parentIx elt
-              GA.unsafeWriteArray (hIndices h) elt parentIx
-              go parentIx
+              GA.unsafeWriteArray indices elt parentIx
+              go arr indices lt parentIx
 
 
 -- | Take the maximum element from the heap (if any) and fix up the

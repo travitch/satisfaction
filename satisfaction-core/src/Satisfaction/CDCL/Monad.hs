@@ -1,3 +1,4 @@
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 -- | These are internal types for the solver
@@ -13,8 +14,10 @@ module Satisfaction.CDCL.Monad (
   ask,
   asks,
   liftIO,
-  assignVariableValue,
-  getDecisionLevel
+  -- * Constraints
+  Constraint(..),
+  ConstraintInterface(..),
+  PropagationResult(..)
   ) where
 
 import GHC.IO ( IO(..) )
@@ -27,20 +30,17 @@ import qualified Data.Foldable as F
 import Data.IORef
 import Data.Int ( Int8 )
 import Data.Ix ( range, rangeSize )
+import Data.Typeable
 import Prelude
 
 import qualified Data.Array.Heap as H
 import qualified Data.Array.Prim.Generic as GA
 import qualified Data.Array.Prim.Mutable as PMA
 import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
-import qualified Data.Array.Traverse as AT
 import qualified Data.Array.Vector as V
 import qualified Data.Ref.Prim as P
 
-import qualified Satisfaction.CDCL.Clause as C
-import qualified Satisfaction.Formula.CNF as CNF
 import qualified Satisfaction.Formula.Literal as L
-import qualified Satisfaction.Internal.Debug as D
 
 -- | Different ways to specify the (initial) maximum number of learned
 -- clauses.  It can be either a ratio of the number of problem clauses
@@ -61,12 +61,54 @@ data Config = Config { cVariableActivityDecayFactor :: Double
                      , cMaxConflictGrowthFactor :: Double
                      }
 
+
+data Constraint = forall a . (Eq a, Typeable a) => Constraint (ConstraintInterface a) a
+
+instance Eq Constraint where
+  (Constraint _ a1) == (Constraint _ a2) =
+    maybe False (== a2) (cast a1)
+
+data PropagationResult = PropagationConflict
+                         -- ^ A conflict was detected during propagation
+                       | PropagationKeepWatch
+                         -- ^ The constraint should be kept in the
+                         -- current list because it became unit or was
+                         -- already satisfied.
+                       | PropagationNewWatch
+                         -- ^ We found a new watch for the constraint,
+                         -- so remove it from the current watchlist
+
+data ConstraintInterface a =
+  CI { conRemove :: Constraint -> a -> Solver ()
+     , conPropagate :: Constraint -> a -> L.Literal -> Solver PropagationResult
+       -- ^ Return 'False' if a conflict is detected
+     , conSimplify :: Constraint -> a -> Solver Bool
+       -- ^ Return 'True' if the constraint
+       -- should be removed after
+       -- simplification
+     , conReason :: Constraint -> a -> Maybe L.Literal -> Solver [L.Literal]
+       -- ^ Return the literals responsible for the conflict.  If the
+       -- argument is @Just lit@, 'conReason' computes the set of
+       -- assignments that implied @lit@.  If the argument is
+       -- @Nothing@, 'conReason' returns the reason for the constraint
+       -- being conflicting.
+     , conLocked :: Constraint -> a -> Solver Bool
+       -- ^ Return 'True' if the constraint
+       -- is "locked" and cannot be removed
+     , conReadActivity :: Constraint -> a -> Solver Double
+     , conWriteActivity :: Constraint -> a -> Double -> Solver ()
+     , conAlwaysKeep :: Constraint -> a -> Solver Bool
+       -- ^ Return 'True' if the simplifier
+       -- should never discard the
+       -- constraint.
+     }
+
 -- | The Reader environment.
 --
 -- The last variable is an IORef because we may want to add new variables
 -- internally later (e.g., for SMT solving).
 data Env = Env { eConfig :: Config
-               , eClausesWatchingLiteral :: PMA.MArray Solver L.Literal (V.Vector PMA.MArray Solver Int (C.Clause Solver))
+               , eClausesWatchingLiteral :: PMA.MArray Solver L.Literal (V.Vector PMA.MArray Solver Int Constraint)
                  -- ^ This array is of length @2n@.  Index @i@ is the
                  -- list of clauses (by index) watching literal @i@.
                  -- Index @2i+1@ is the list of clauses watching @~i@.
@@ -79,12 +121,12 @@ data Env = Env { eConfig :: Config
                  -- levels in the decision stack.
                , eVarLevels :: PUMA.MArray Solver L.Variable Int
                  -- ^ The decision level for each variable.
-               , eDecisionReasons :: PMA.MArray Solver L.Variable (Maybe (C.Clause Solver))
+               , eDecisionReasons :: PMA.MArray Solver L.Variable (Maybe Constraint)
                  -- ^ The clause that was the reason for a
                  -- given assertion.  -1 if this was a decision.
-               , eProblemClauses :: V.Vector PMA.MArray Solver Int (C.Clause Solver)
+               , eProblemClauses :: V.Vector PMA.MArray Solver Int Constraint
                  -- ^ Given problem clauses
-               , eLearnedClauses :: V.Vector PMA.MArray Solver Int (C.Clause Solver)
+               , eLearnedClauses :: V.Vector PMA.MArray Solver Int Constraint
                  -- ^ Learned clause storage
                , eLearnedClauseCount :: P.Ref Solver Int
                  -- ^ The number of learned clauses.
@@ -129,69 +171,48 @@ data Env = Env { eConfig :: Config
                  -- to re-allocate it constantly.
                }
 
--- | Try to assert a literal, returning False if the assertion causes
--- a contradiction.
-tryAssertLiteral :: L.Literal -> Maybe (C.Clause Solver) -> Solver Bool
-tryAssertLiteral lit reason = do
-  e <- ask
-  let var = L.var lit
-      val = L.satisfyLiteral lit
-  val0 <- GA.unsafeReadArray (eAssignment e) var
-  case val0 /= L.unassigned && val0 /= val of
-    True -> return False
-    False -> do
-      assignVariableValue var val reason
-      V.unsafePush (eDecisionStack e) lit
-      return True
-
--- | Get the current decision level
-getDecisionLevel :: Solver Int
-getDecisionLevel = do
-  bv <- asks eDecisionBoundaries
-  V.size bv
-{-# INLINE getDecisionLevel #-}
-
--- | Assign a 'L.Value' to a 'L.Variable'.
---
--- Note that the 'State' is always required to be updated at the same
--- time.
-assignVariableValue :: L.Variable -> L.Value -> Maybe (C.Clause Solver) -> Solver ()
-assignVariableValue var val reason = do
-  e <- ask
-  dl <- getDecisionLevel
-  liftIO $ D.traceIO ("  [assign] Assigning " ++ show val ++ " to " ++ show var ++ " at " ++ show dl)
-  GA.unsafeWriteArray (eAssignment e) var val
-  GA.unsafeWriteArray (eVarLevels e) var dl
-  GA.unsafeWriteArray (eDecisionReasons e) var reason
-{-# INLINE assignVariableValue #-}
-
-
 -- | A context in which a solver runs.  This is basically a ReaderT IO.
 newtype Solver a = S { runS :: Env -> IO a }
 
 -- | Run a solver with an environment set up for a given CNF formula.
-runSolver :: Config -> CNF.CNF b -> (Bool -> Solver a) -> IO a
-runSolver config cnf comp =
-  runS (bootstrapEnv config cnf comp) undefined
+--
+-- The clausal constraint constructor is passed in as an argument to
+-- break some cyclic dependencies
+runSolver :: Config
+          -- ^ Solver configuration
+          -> (L.Variable, L.Variable)
+          -- ^ The variables present in the problem
+          -> Solver Bool
+          -- ^ An action to initialize the problem clauses.  Returns
+          -- 'True' if there is a trivial contradiction.
+          -> (Bool -> Solver a)
+          -- ^ A callback that will be called; the boolean indicates
+          -- whether or not the input problem is trivially
+          -- unsatisfiable.
+          -> IO a
+runSolver config vrange initAction comp =
+  runS (bootstrapEnv config vrange initAction comp) undefined
 
-bootstrapEnv :: Config -> CNF.CNF b -> (Bool -> Solver a) -> Solver a
-bootstrapEnv config cnf comp = do
-  let vrange@(lowVar, highVar) = CNF.variableRange cnf
-      lrange = (L.toPositiveLiteral lowVar, L.toNegativeLiteral highVar)
+bootstrapEnv :: Config
+             -> (L.Variable, L.Variable)
+             -> Solver Bool
+             -> (Bool -> Solver a)
+             -> Solver a
+bootstrapEnv config vrange@(lowVar, highVar) initAction comp = do
+  let lrange = (L.toPositiveLiteral lowVar, L.toNegativeLiteral highVar)
       nLits = rangeSize lrange
       nVars = rangeSize vrange
-      nClauses = CNF.clauseCount cnf
       maxLearnedClauses =
         case cMaxLearnedClauses config of
           LLAbsolute i -> i
-          LLRelativeRatio r -> floor (r * fromIntegral (CNF.clauseCount cnf))
+          LLRelativeRatio _r -> 1000 -- floor (r * fromIntegral nClauses) FIXME
       learnedCap = maxLearnedClauses * 2
   -- There is an assignment for each variable
   assignment <- GA.newArray nVars L.unassigned
   -- Watchlist
   cwl <- GA.newArray_ nLits
   F.forM_ (range lrange) $ \l -> do
-    v <- V.new nClauses undefined -- invalid clauses
+    v <- V.new 128 undefined -- invalid clauses
     GA.unsafeWriteArray cwl l v
 
   -- We only need the decision stack to be able to hold all of the literals
@@ -202,7 +223,7 @@ bootstrapEnv config cnf comp = do
   qref <- P.newRef 0
   highVarRef <- P.newRef highVar
   reasons <- GA.newArray nVars Nothing
-  pclauses <- V.new (CNF.clauseCount cnf) undefined
+  pclauses <- V.new 2048 undefined
 
   varAct <- GA.newArray nVars 0
   let ordering v1 v2 = do
@@ -253,7 +274,7 @@ bootstrapEnv config cnf comp = do
                 , eSeen = seen
                 }
 
-  liftIO (runS (initializeWatches cnf >>= comp) env)
+  liftIO (runS (initAction >>= comp) env)
 
 ask :: Solver Env
 ask = S $ \r -> return r
@@ -318,36 +339,6 @@ initializeVariableOrdering heap lowVar highVar = go lowVar
           H.unsafeInsert heap v
           initializeVariableOrdering heap (L.nextVariable v) highVar
 
--- | Initialize the watches.  Each clause starts by watching its first
--- two literals.  Clauses with only one literal are unit clauses,
--- whose literals are automatically inserted into the worklist
---
--- Returns True if there is a trivial contradiction
-initializeWatches :: CNF.CNF a -> Solver Bool
-initializeWatches cnf = do
-  e <- ask
-  let clauses = eProblemClauses e
-      cwl = eClausesWatchingLiteral e
-  AT.foldArrayM (watchFirst cwl clauses) False (CNF.clauseArray cnf)
-  where
-    -- Empty clauses are discarded.  Clauses with a single literal
-    -- assert that literal.  Otherwise, construct an internal problem
-    -- clause (which implicitly has two watched literals).
-    watchFirst cwl clauses hasContradiction _ix clause = do
-      case CNF.clauseLiterals clause of
-        [] -> return hasContradiction
-        l : [] -> do
-          validAssertion <- tryAssertLiteral l Nothing
-          return (hasContradiction || not validAssertion)
-        lits@(l1 : l2 : _) -> do
-          cl <- C.new 0 lits
-          V.push clauses cl
-          l1w <- GA.readArray cwl l1
-          V.push l1w cl
-          l2w <- GA.readArray cwl l2
-          V.push l2w cl
-          return hasContradiction
-
 {- note [Learned Clause Watches]
 
 This is an important but understated part of the minisat algorithm.
@@ -379,13 +370,3 @@ consistent, hence the 'watchFirstAtLevel' function.
 
 -}
 
-{- Note [VSIDS]
-
-VSIDS stands for Variable State Independent Decaying Sum.  It is a
-heuristic for choosing the variable assignment order during the
-search.  The idea is to assign each variable an activity score.
-Activity is increased when a variable is involved in a conflict;
-variables involved in more conflicts will be resolved sooner.
-Ideally, this resolves conflicts earlier in the search.
-
--}

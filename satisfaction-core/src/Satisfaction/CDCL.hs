@@ -24,12 +24,22 @@ module Satisfaction.CDCL (
   setMaxLearnedClauseGrowthFactor,
   setMaxConflicts,
   setMaxConflictGrowthFactor,
-  -- * Types
-  C.CNF,
-  C.Lit(..),
-  C.fromSimpleList
+  -- * Formulas
+  F.Formula,
+  F.variable,
+  F.negation,
+  F.conjunction,
+  F.disjunction,
+  F.implication,
+  F.equivalent,
+  F.exclusive,
+  F.toCNF,
+  F.CNF,
+  -- * Direct CNF construction
+  F.Lit(..),
+  F.fromSimpleList
   ) where
 
 import Satisfaction.CDCL.Solver
 import Satisfaction.CDCL.Statistics
-import qualified Satisfaction.Formula.CNF as C
+import qualified Satisfaction.Formula as F

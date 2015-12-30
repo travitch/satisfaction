@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 module Satisfaction.CDCL.Solver (
   solve,
@@ -22,22 +23,25 @@ module Satisfaction.CDCL.Solver (
 
 import Control.Applicative
 import qualified Data.Array.Prim.Unboxed as PUA
+import qualified Data.Array.Traverse as AT
+import qualified Data.Array.Vector as V
+import qualified Data.Ref.Prim as P
 
 import Satisfaction.CDCL.Monad
 import qualified Satisfaction.CDCL.AnalyzeConflict as AC
-import qualified Satisfaction.CDCL.Clause as CL
+import qualified Satisfaction.CDCL.Constraint as CO
 import qualified Satisfaction.CDCL.Core as C
 import qualified Satisfaction.CDCL.Simplify as SI
 import qualified Satisfaction.CDCL.Statistics as ST
 import qualified Satisfaction.CDCL.UnitPropagation as P
-import qualified Satisfaction.Formula.CNF as C
+import qualified Satisfaction.Formula as F
 import qualified Satisfaction.Formula.Literal as L
 import qualified Satisfaction.Internal.Debug as D
 
 import Prelude
 
 -- | A model of a satisfying assignment
-data Model a = Model { modelFormula :: C.CNF a
+data Model a = Model { modelFormula :: F.CNF a
                      , modelRawSolution :: PUA.Array L.Variable L.Value
                      , modelSatisfyingAssignment :: [(a, Bool)]
                      }
@@ -126,22 +130,33 @@ setMaxLearnedClausesAbsolute :: Int -> Config -> Config
 setMaxLearnedClausesAbsolute i cfg =
   cfg { cMaxLearnedClauses = LLAbsolute i }
 
--- | Solve a SAT instance in 'C.CNF' form with the default solver
+-- | Solve a SAT instance in 'F.CNF' form with the default solver
 -- configuration
-solve :: C.CNF a -> IO (Solution a)
+solve :: Solver ()
+      -- ^ Extra assertions to include in the problem
+      -> F.CNF a
+      -- ^ The formula to solve
+      -> IO (Solution a)
 solve = solveWith defaultConfig
 
 -- | Solve a SAT instance in 'C.CNF' form with the given 'Config'
-solveWith :: Config -> C.CNF a -> IO (Solution a)
-solveWith config cnf = do
-  isol <- runSolver config cnf $ \hasContradiction -> do
+solveWith :: Config
+          -- ^ Solver configuration
+          -> Solver ()
+          -- ^ Extra assertions to include in the problem
+          -> F.CNF a
+          -- ^ The formula to solve
+          -> IO (Solution a)
+solveWith config extraAssertions cnf = do
+  let vrange = F.variableRange cnf
+  isol <- runSolver config vrange (extraAssertions >> initializeCNF cnf) $ \hasContradiction -> do
     case hasContradiction of
-      True -> IUnsat <$> ST.extractStatistics
+      True -> unsatisfiable
       False ->
         -- Propagate units based on unit clauses (which have been added to
         -- the propagation queue during setup).  If we already have a
         -- conflict, we are done.  Otherwise, start the decision loop.
-        propagateUnits search (\_ -> IUnsat <$> ST.extractStatistics)
+        propagateUnits search (const unsatisfiable)
   case isol of
     IUnsat stats -> do
       return Unsatisfiable { solutionStats = stats }
@@ -150,9 +165,12 @@ solveWith config cnf = do
                          , solutionModel =
                            Model { modelFormula = cnf
                                  , modelRawSolution = assignment
-                                 , modelSatisfyingAssignment = C.mapSolution cnf assignment
+                                 , modelSatisfyingAssignment = F.mapSolution cnf assignment
                                  }
                          }
+
+unsatisfiable :: Solver ISolution
+unsatisfiable = IUnsat <$> ST.extractStatistics
 
 -- | Extract a satisfying assignment from the model.
 satisfyingAssignment :: Model a -> [(a, Bool)]
@@ -185,13 +203,13 @@ extractSolution = ISolution <$> C.extractAssignment <*> ST.extractStatistics
 -- detect conflicts between unit clauses early before we actually do
 -- the assignment.
 propagateUnits :: Solver ISolution                -- ^ Continuation if there was no conflict after propagating
-               -> (CL.Clause Solver -> Solver ISolution) -- ^ Continuation on conflict
+               -> (Constraint -> Solver ISolution) -- ^ Continuation on conflict
                -> Solver ISolution
 propagateUnits kNoConflict kConflict = go
   where
     go = P.withQueuedDecision kNoConflict $ \lit -> do
       liftIO $ D.traceIO ("[pu] Propagating units affected by assignment " ++ show lit)
-      P.updateWatchlists lit kConflict (IUnsat <$> ST.extractStatistics) go
+      P.updateWatchlists lit kConflict unsatisfiable go
 
 -- | Assign a value to the next unassigned 'Variable'.
 --
@@ -223,20 +241,81 @@ backtrack kBacktracked AC.Conflict { AC.cAssertingLit = assertedLit
                                    , AC.cBacktrackLevel = btLevel
                                    } = do
   liftIO $ D.traceIO ("[bt] Backtracking due to conflict " ++ show (assertedLit : otherLits) ++ " to " ++ show btLevel)
-  dl <- getDecisionLevel
+  dl <- C.getDecisionLevel
   case () of
     _ | dl == 0 -> do
           liftIO $ D.traceIO "[bt] Deriving unsat"
-          IUnsat <$> ST.extractStatistics
+          unsatisfiable
       | otherwise -> do
           -- If we have a special root level (as in minisat), we would want to
           -- use that instead of zero
           C.undoUntil btLevel
-          C.learnClause btLevel assertedLit otherLits
+          learnClause btLevel assertedLit otherLits
           C.decayVariableActivity
           C.decayClauseActivity
           liftIO $ D.traceIO ("[bt] Learned clause " ++ show (assertedLit : otherLits) ++ " and asserted " ++ show assertedLit)
           kBacktracked
+
+-- | Learn a clause and assert its asserting literal.
+--
+-- The asserting literal is asserted here.
+--
+-- If the clause is a singleton, this function simply asserts it.  The
+-- decision level should be *ground* if the given clause is a
+-- singleton, but this function does not check or enforce that.  The
+-- clause learning algorithm should have instructed the backtracking
+-- function to backjump appropriately.
+--
+-- Otherwise, this function simply adds the clause to the list of
+-- clauses and sets appropriate watches.  When we construct the
+-- learned clause (for non-singleton clauses), the first literal is
+-- the asserting literal.  We know we want to watch this literal, so
+-- we leave it at index 0.  We need to choose the other literal to
+-- watch with 'watchFirstAtLevel'.
+--
+-- Note that we cannot enforce that learned clause limit here.  We
+-- need to at least assert the asserting literal from this clause, but
+-- if we do that, we need to have a real clause as its reason.  We
+-- cannot say it was a ground literal, since that would mean we could
+-- never undo the assignment.  We could, in theory, add a sentinel
+-- value that says "this was an asserted literal, but there was no
+-- room for its clause", but that is somewhat complicated.  It would
+-- also ruin future clause learning involving this literal.  Instead,
+-- we'll treat the maximum number of learned clauses as a soft limit
+-- and enforce it later (after conflict resolution).
+learnClause :: Int -> L.Literal -> [L.Literal] -> Solver ()
+learnClause btLevel assertedLit otherLits = do
+  e <- ask
+  dl <- C.getDecisionLevel
+  liftIO $ D.traceIO ("[lc] Learning clause and asserting " ++ show assertedLit ++ " at dl " ++ show dl)
+  case otherLits of
+    [] -> C.assertLiteral assertedLit Nothing
+    (l2:rest) -> do
+      P.modifyRef' (eLearnedClauseCount e) (+1)
+      con <- CO.mkLearnedClauseConstraint btLevel assertedLit l2 rest
+      liftIO $ D.traceIO ("  [lc] Clause ref allocated")
+      V.push (eLearnedClauses e) con
+      C.assertLiteral assertedLit (Just con)
+
+-- | Traverse a 'C.CNF' problem and assert its clauses as problem
+-- clauses.
+--
+-- Returns 'True' if the problem contains a trivial contradiction
+initializeCNF :: F.CNF a -> Solver Bool
+initializeCNF cnf = do
+  constraints <- asks eProblemClauses
+  AT.foldArrayM (watchFirst constraints) False (F.clauseArray cnf)
+  where
+    watchFirst constraints hasContradiction _ix clause = do
+      case F.clauseLiterals clause of
+        [] -> return hasContradiction
+        l : [] -> do
+          validAssertion <- C.tryAssertLiteral l Nothing
+          return (hasContradiction || not validAssertion)
+        l1 : l2 : rest -> do
+          con <- CO.mkClauseConstraint l1 l2 rest
+          V.push constraints con
+          return hasContradiction
 
 {- Note [Unit Propagation]
 

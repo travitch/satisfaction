@@ -10,7 +10,6 @@ module Satisfaction.CDCL.Simplify (
   simplifyClauses
   ) where
 
-import Control.Monad ( when )
 import qualified Data.Array.Prim.Generic as GA
 import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
 import qualified Data.Array.Prim.Mutable as PMA
@@ -19,18 +18,9 @@ import qualified Data.Array.Vector as V
 import qualified Data.List as L
 import qualified Data.Ref.Prim as P
 
-import qualified Satisfaction.CDCL.Clause as CL
-import qualified Satisfaction.CDCL.Core as C
 import Satisfaction.CDCL.Monad
-import qualified Satisfaction.Formula.Literal as L
-
-clauseIsLocked :: CL.Clause Solver -> Solver Bool
-clauseIsLocked cl = do
-  e <- ask
-  wl1 <- CL.unsafeReadLiteral cl 0
-  r1 <- GA.unsafeReadArray (eDecisionReasons e) (L.var wl1)
-  return (r1 == Just cl)
-{-# INLINE clauseIsLocked #-}
+import qualified Satisfaction.CDCL.Core as C
+import qualified Satisfaction.CDCL.Constraint as CO
 
 -- | If we have exceeded our allowed number of learned clauses, throw
 -- out about half of them (plus inactive clauses).
@@ -69,17 +59,17 @@ removeInactiveClauses = do
       | ix >= nLearned = return ()
       | otherwise = do
           cl <- GA.unsafeReadArray clauseArr ix
-          locked <- clauseIsLocked cl
-          clAct <- CL.readActivity cl
-          clSize <- CL.literalCount cl
-          case locked || clAct > cutoffActivity || clSize == 2 of
+          locked <- CO.constraintIsLocked cl
+          clAct <- CO.constraintReadActivity cl
+          alwaysKeep <- CO.constraintAlwaysKeep cl
+          case locked || clAct > cutoffActivity || alwaysKeep of
             True -> go cutoffActivity (ix + 1) nLearned clauseVec clauseArr
             False -> do
-              removeClause clauseVec ix
+              removeConstraint clauseVec ix
               go cutoffActivity ix (nLearned - 1) clauseVec clauseArr
 
 
-forLearnedClauses :: a -> (a -> Int -> CL.Clause Solver -> Solver a) -> Solver a
+forLearnedClauses :: a -> (a -> Int -> Constraint -> Solver a) -> Solver a
 forLearnedClauses a k = do
   e <- ask
   AT.foldMArray (eLearnedClauses e) a $ \ix cl a' -> do
@@ -89,7 +79,7 @@ approximateMedian :: Int -> Solver Double
 approximateMedian nLearned = do
   mstorage <- GA.newArray nLearned 0
   nActivities <- forLearnedClauses 0 $ \counter _arrix cl -> do
-    activity <- CL.readActivity cl
+    activity <- CO.constraintReadActivity cl
     GA.unsafeWriteArray mstorage counter activity
     return (counter + 1)
   medianOfMedians nActivities mstorage
@@ -142,104 +132,34 @@ medianOfFiveFrom ix arr = do
 -- (i.e. shrunk).  We also pass in the backing array directly to save
 -- a pointer dereference to read each clause.  The two won't get out
 -- of sync because we never shrink a dynamic array.
-simplifyVectorClauses :: forall arr . (GA.PrimMArray arr (CL.Clause Solver))
-                      => Int
-                      -- ^ Current index being processed
-                      -> Int
-                      -- ^ Total number of clauses in the vector
-                      -> V.Vector PMA.MArray Solver Int (CL.Clause Solver)
-                      -- ^ The vector of problem clauses
-                      -> arr Solver Int (CL.Clause Solver)
-                      -- ^ The backing array of problem clauses
-                      -> Solver ()
-simplifyVectorClauses clauseNo nClauses clauseVec clauseArr
-  | clauseNo >= nClauses = return ()
-  | otherwise = do
-      c <- GA.unsafeReadArray clauseArr clauseNo
-      nLits <- CL.literalCount c
-      go c nLits 0
+simplifyVectorConstraints :: forall arr . (GA.PrimMArray arr Constraint)
+                           => Int
+                           -- ^ Total number of constraints in the vector
+                           -> V.Vector PMA.MArray Solver Int Constraint
+                           -- ^ The vector of problem clauses
+                           -> arr Solver Int Constraint
+                           -- ^ The backing array of problem clauses
+                           -> Solver ()
+simplifyVectorConstraints nConstraints0 conVec conArr =
+  go 0 nConstraints0
   where
-    go c nLits litIx
-      | litIx >= nLits =
-        case () of
-            _ | nLits == 0 -> error "Simplify produced an empty clause"
-              | litIx == 0 -> do
-                  -- If we have one literal left, that means it is unassigned
-                  -- and we can assign it True right now (and then remove it).
-                  -- We also have to unwatch the clause.
-                  V.removeElement clauseVec clauseNo
-                  l <- CL.unsafeReadLiteral c 0
-                  unwatchLiteral c l
-                  C.assertLiteral l Nothing
-                  simplifyVectorClauses clauseNo (nClauses - 1) clauseVec clauseArr
-              | otherwise ->
-                  simplifyVectorClauses (clauseNo + 1) nClauses clauseVec clauseArr
+    go ix nConstraints
+      | ix >= nConstraints = return ()
       | otherwise = do
-          l <- CL.unsafeReadLiteral c litIx
-          v <- C.literalValue l
-          case v of
-            _ | v == L.liftedFalse -> do
-                  -- We know that the literal must be false, so we
-                  -- want to remove it from the clause
-                  mNewLit <- CL.removeLiteral c l
-                  -- If this literal was watched, we have to unwatch
-                  -- it and watch its replacement (if there is one)
-                  when (litIx < 2) $ do
-                    unwatchLiteral c l
-                    case mNewLit of
-                      Just newLit -> watchLiteral c newLit
-                      Nothing -> return ()
-                  -- Since we removed a literal by swapping it out, we
-                  -- have to examine this index again.
-                  go c (nLits - 1) litIx
-              | v == L.liftedTrue -> do
-                  -- The clause is satisfied, so don't bother to mess
-                  -- with it anymore.  We can remove it, though.
-                  --
-                  -- The first two literals (if there are two) are
-                  -- watched.  We have to update the watchlists since
-                  -- we'll be removing this clause.
-                  removeClause clauseVec clauseNo
-                  simplifyVectorClauses clauseNo (nClauses - 1) clauseVec clauseArr
-              | otherwise -> go c nLits (litIx + 1)
-
-removeClause :: (GA.PrimMArray a (CL.Clause Solver)) => V.Vector a Solver Int (CL.Clause Solver) -> Int -> Solver ()
-removeClause clauseVec clauseNo = do
-  cl <- V.unsafeReadVector clauseVec clauseNo
-  V.removeElement clauseVec clauseNo
-  litCount <- CL.literalCount cl
-  when (litCount >= 1) $ do
-    l0 <- CL.unsafeReadLiteral cl 0
-    unwatchLiteral cl l0
-  when (litCount >= 2) $ do
-    l1 <- CL.unsafeReadLiteral cl 1
-    unwatchLiteral cl l1
-
-watchLiteral :: CL.Clause Solver -> L.Literal -> Solver ()
-watchLiteral c l = do
-  wls <- asks eClausesWatchingLiteral
-  v <- GA.unsafeReadArray wls l
-  V.push v c
-
-unwatchLiteral :: CL.Clause Solver -> L.Literal -> Solver ()
-unwatchLiteral c l = do
-  wls <- asks eClausesWatchingLiteral
-  v <- GA.unsafeReadArray wls l
-  nClauses <- V.size v
-  go v 0 nClauses
-  where
-    go v ix nClauses
-      | ix >= nClauses = error ("Could not find literal " ++ show l ++ " in watchlist")
-      | otherwise = do
-          cl <- V.unsafeReadVector v ix
-          case cl == c of
-            False -> go v (ix + 1) nClauses
+          con <- GA.unsafeReadArray conArr ix
+          shouldRemove <- CO.constraintSimplify con
+          case shouldRemove of
+            False -> go (ix + 1) nConstraints
             True -> do
-              V.unsafeWriteVector v ix sentinelClause
-              V.removeElement v ix
+              CO.constraintRemove con
+              V.removeElement conVec ix
+              go ix (nConstraints - 1)
 
-sentinelClause :: CL.Clause Solver
-sentinelClause = error "Simplifier sentinel clause"
+removeConstraint :: (GA.PrimMArray a Constraint) => V.Vector a Solver Int Constraint -> Int -> Solver ()
+removeConstraint clauseVec clauseNo = do
+  cl <- V.unsafeReadVector clauseVec clauseNo
+  CO.constraintRemove cl
+  V.removeElement clauseVec clauseNo
 
 -- | If we are decision level 0, we can use the facts we have asserted
 -- at this level to simplify the clause database, including *problem
@@ -249,7 +169,7 @@ sentinelClause = error "Simplifier sentinel clause"
 -- literals.  We can remove all False literals from existing clauses.
 simplifyClauses :: Solver ()
 simplifyClauses = do
-  dl <- getDecisionLevel
+  dl <- C.getDecisionLevel
   case dl > 0 of
     True -> return ()
     False -> do
@@ -259,5 +179,5 @@ simplifyClauses = do
           learnedClauses = eLearnedClauses e
       nClauses <- V.size probClauses
       nLearnedClauses <- V.size learnedClauses
-      GA.withBackingArray probClauses (simplifyVectorClauses 0 nClauses probClauses)
-      GA.withBackingArray learnedClauses (simplifyVectorClauses 0 nLearnedClauses learnedClauses)
+      GA.withBackingArray probClauses (simplifyVectorConstraints nClauses probClauses)
+      GA.withBackingArray learnedClauses (simplifyVectorConstraints nLearnedClauses learnedClauses)

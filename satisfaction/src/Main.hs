@@ -10,7 +10,7 @@ import qualified Options.Applicative as O
 import qualified Language.CNF.Parse.ParseDIMACS as P
 import qualified System.Exit as E
 
-import qualified Satisfaction as S
+import qualified Satisfaction.CDCL as S
 
 import Prelude
 
@@ -65,7 +65,7 @@ satisfy opts = do
         Nothing -> putStrLn "No clauses"
         Just cnf' -> do
           let config = applyOptions opts S.defaultConfig
-          sol <- S.solveWith config cnf'
+          sol <- S.solveWith config (return ()) cnf'
           case sol of
             S.Unsatisfiable {} -> putStrLn "Unsat"
             S.Satisfiable { S.solutionModel = sol' } -> print (S.satisfyingAssignment sol')

@@ -7,6 +7,7 @@ import qualified Data.Array.IArray as IA
 import qualified Data.Array.Prim.Generic as GA
 import qualified Data.Array.Prim.Mutable as PMA
 import qualified Data.Array.Prim.Unboxed.Mutable as PUMA
+import qualified Data.Array.Vector as V
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Language.CNF.Parse.ParseDIMACS as P
@@ -19,7 +20,10 @@ import qualified Test.Tasty.HUnit as T
 import qualified Data.Array.Heap as H
 
 import qualified Satisfaction.CDCL as S
+import qualified Satisfaction.CDCL.Monad as S
 import qualified Satisfaction.CDCL.Clause as C
+import qualified Satisfaction.CDCL.Constraint as CO
+import qualified Satisfaction.Formula as CNF
 import qualified Satisfaction.Formula.Literal as L
 
 main :: IO ()
@@ -32,14 +36,19 @@ main = do
     heapTests2 "UnboxedHeapTests2" allocateUnboxedHeap,
     heapTests2 "BoxedHeapTests2" allocateBoxedHeap,
     clauseTests,
-    dimacsTests "SatTests" satTests expectSatisfiable,
-    dimacsTests "UnsatTests" unsatTests expectUnsatisfiable
+    dimacsTests "SatTests" satTests noExtraAssertion expectSatisfiable,
+    dimacsTests "UnsatTests" unsatTests noExtraAssertion expectUnsatisfiable,
+    dimacsTests "ConstrainedSatTests" satTests assertFirstTwoEqual constrainedExpectSatisfiable
     ]
 
 -- The dimacs tests
 
-dimacsTests :: String -> [FilePath] -> (P.CNF -> S.Solution Int -> T.Assertion) -> T.TestTree
-dimacsTests name inputs checkTest = T.testGroup name $ map mkTest inputs
+dimacsTests :: String
+            -> [FilePath]
+            -> (S.CNF Int -> IO (S.Solver ()))
+            -> (P.CNF -> S.Solution Int -> T.Assertion)
+            -> T.TestTree
+dimacsTests name inputs extraAssertion checkTest = T.testGroup name $ map mkTest inputs
   where
     mkTest input = T.testCase input $ do
       ecnf <- P.parseFile input
@@ -49,9 +58,23 @@ dimacsTests name inputs checkTest = T.testGroup name $ map mkTest inputs
           case convertCNF cnf of
             Nothing -> T.assertString "No clauses"
             Just cnf' -> do
-              sol <- S.solve cnf'
+              extraA <- extraAssertion cnf'
+              sol <- S.solve extraA cnf'
               checkTest cnf sol
 
+noExtraAssertion :: a -> IO (S.Solver ())
+noExtraAssertion _ = return (return ())
+
+assertFirstTwoEqual :: S.CNF Int -> IO (S.Solver ())
+assertFirstTwoEqual cnf = do
+  let mv1 = CNF.cnfMapVariable cnf 1
+      mv2 = CNF.cnfMapVariable cnf 2
+  case (mv1, mv2) of
+    (Just v1, Just v2) -> return $ do
+      con <- CO.mkEqualityConstraint v1 v2
+      e <- S.ask
+      V.push (S.eProblemClauses e) con
+    _ -> return (return ())
 
 convertCNF :: P.CNF -> Maybe (S.CNF Int)
 convertCNF cnf0 =
@@ -67,6 +90,29 @@ convertCNF cnf0 =
 expectSatisfiable :: P.CNF -> S.Solution Int -> T.Assertion
 expectSatisfiable _  S.Unsatisfiable {} = T.assertFailure "Expected satisfying assignment"
 expectSatisfiable cnf S.Satisfiable { S.solutionModel = sol } = mapM_ assertAtLeastOneTrue (P.clauses cnf)
+  where
+    assignment = S.satisfyingAssignment sol
+    assertAtLeastOneTrue clause = do
+      let litVal :: Int -> IO Bool
+          litVal l | l < 0 = maybe msg (return . not) (lookup (abs l) assignment)
+                   | otherwise = maybe msg return (lookup l assignment)
+            where
+              msg = error ("Expected assignment for lit " ++ show l)
+      clauseValue <- mapM litVal (IA.elems clause)
+      T.assertBool ("Expected clause to be true: " ++ show clause) (or clauseValue)
+
+-- These are satisfiable tests with some extra constraints asserted.
+-- The extra constraints might make them unsat, which is fine.
+--
+-- If they come back satisfiable, check that the extra assertion
+-- really holds.
+constrainedExpectSatisfiable :: P.CNF -> S.Solution Int -> T.Assertion
+constrainedExpectSatisfiable _ S.Unsatisfiable {} = return ()
+constrainedExpectSatisfiable cnf S.Satisfiable { S.solutionModel = sol } = do
+  -- Make sure that each clause is still satisfied
+  mapM_ assertAtLeastOneTrue (P.clauses cnf)
+  -- Now make sure that v0 == v1
+  T.assertBool "First two variables equal" (lookup 1 assignment == lookup 2 assignment)
   where
     assignment = S.satisfyingAssignment sol
     assertAtLeastOneTrue clause = do
