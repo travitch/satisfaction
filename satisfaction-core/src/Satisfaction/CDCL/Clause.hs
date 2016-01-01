@@ -26,8 +26,12 @@ module Satisfaction.CDCL.Clause (
 
 import GHC.Exts
 import GHC.Word
+
+import Control.Applicative
 import Data.Bits
 import qualified Data.Foldable as F
+
+import Prelude
 
 import qualified Control.Monad.Prim as P
 import qualified Satisfaction.Formula.Literal as L
