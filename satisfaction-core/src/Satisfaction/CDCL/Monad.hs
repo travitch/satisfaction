@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -30,7 +31,7 @@ import qualified Data.Foldable as F
 import Data.IORef
 import Data.Int ( Int8 )
 import Data.Ix ( range, rangeSize )
-import Data.Typeable
+import Data.Typeable ( Typeable, cast )
 import Prelude
 
 import qualified Data.Array.Heap as H
@@ -173,6 +174,7 @@ data Env = Env { eConfig :: Config
 
 -- | A context in which a solver runs.  This is basically a ReaderT IO.
 newtype Solver a = S { runS :: Env -> IO a }
+                 deriving (Typeable)
 
 -- | Run a solver with an environment set up for a given CNF formula.
 --

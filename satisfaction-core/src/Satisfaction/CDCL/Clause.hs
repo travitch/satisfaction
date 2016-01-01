@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
 -- | The definition of clauses used in the solver
@@ -30,6 +31,7 @@ import GHC.Word
 import Control.Applicative
 import Data.Bits
 import qualified Data.Foldable as F
+import Data.Typeable ( Typeable )
 
 import Prelude
 
@@ -38,6 +40,7 @@ import qualified Satisfaction.Formula.Literal as L
 
 -- | A clause with metadata mutable in IO
 data Clause m = Clause (MutableByteArray# (P.PrimState m))
+              deriving (Typeable)
 
 instance Eq (Clause m) where
   (Clause b1) == (Clause b2) = isTrue# (sameMutableByteArray# b1 b2)

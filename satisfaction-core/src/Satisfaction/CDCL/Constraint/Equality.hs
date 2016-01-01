@@ -1,8 +1,11 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 -- | This constraint enforces that two variables are always assigned
 -- the same value.
 module Satisfaction.CDCL.Constraint.Equality (
   mkEqualityConstraint
   ) where
+
+import Data.Typeable ( Typeable )
 
 import qualified Data.Ref.Prim as P
 
@@ -17,6 +20,7 @@ data EqualityConstraint =
                      , ecVar1 :: {-# UNPACK #-} !L.Variable
                      , ecVar2 :: {-# UNPACK #-} !L.Variable
                      }
+  deriving (Typeable)
 
 instance Eq EqualityConstraint where
   ec1 == ec2 = ecVar1 ec1 == ecVar1 ec2 && ecVar2 ec1 == ecVar2 ec2
