@@ -292,12 +292,19 @@ instance Monad Solver where
   {-# INLINE (>>=) #-}
   return x = S $ \_ -> return x
   (>>=) = bindS
+  (>>) = bindS'
 
 bindS :: Solver a -> (a -> Solver b) -> Solver b
 bindS m k = S $ \r -> do
   a <- runS m r
   runS (k a) r
 {-# INLINE bindS #-}
+
+bindS' :: Solver a -> Solver b -> Solver b
+bindS' m1 m2 = S $ \r -> do
+  _ <- runS m1 r
+  runS m2 r
+{-# INLINE bindS' #-}
 
 instance P.PrimMonad Solver where
   type PrimState Solver = RealWorld
